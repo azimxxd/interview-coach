@@ -44,6 +44,28 @@ uvicorn main:app --host 127.0.0.1 --port 8008
 
 If no NVIDIA GPU is detected, the server raises an error.
 
+## Proxy mode (Option A: official PersonaPlex/Moshi server)
+
+If you are running the official PersonaPlex/Moshi server, this proxy can
+forward audio to it and stream audio/text back to the web app.
+
+1) Start the official server (see the NVIDIA PersonaPlex repo for setup).
+   It typically exposes a WebSocket at `ws://127.0.0.1:8998/api/chat`.
+
+2) Run this proxy with a server URL:
+
+```bash
+set PERSONAPLEX_PROXY_URL=ws://127.0.0.1:8998/api/chat
+uvicorn main:app --host 127.0.0.1 --port 8008
+```
+
+Notes:
+- You can also use `MOSHI_SERVER_URL` instead of `PERSONAPLEX_PROXY_URL`.
+- If your official server uses HTTPS with a self-signed cert, set:
+  `set MOSHI_INSECURE=1`
+- The proxy expects 16kHz PCM input from the browser and resamples to 24kHz for
+  the official server.
+
 ## Protocol
 
 WebSocket endpoint: `ws://127.0.0.1:8008/ws`
