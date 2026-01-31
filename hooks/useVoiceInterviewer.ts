@@ -14,7 +14,6 @@ type VoiceStatus = "idle" | "connecting" | "ready" | "error";
 
 type VoiceInterviewerConfig = {
   enabled: boolean;
-  language: "EN" | "RU";
   stream: MediaStream | null;
   onWarning: (message: string) => void;
 };
@@ -68,7 +67,6 @@ function pcm16ToBase64(pcm: Int16Array) {
 
 export function useVoiceInterviewer({
   enabled,
-  language,
   stream,
   onWarning
 }: VoiceInterviewerConfig) {
@@ -160,7 +158,7 @@ export function useVoiceInterviewer({
       client.send({
         type: "hello",
         sessionId: `${Date.now()}`,
-        lang: language === "RU" ? "ru" : "en",
+        lang: "en",
         mode: "interviewer"
       });
       setStatus("ready");
@@ -169,7 +167,7 @@ export function useVoiceInterviewer({
       setStatus("error");
       return false;
     }
-  }, [enabled, handleServerMessage, language, onWarning, wsUrl]);
+  }, [enabled, handleServerMessage, onWarning, wsUrl]);
 
   const disconnect = useCallback(() => {
     clientRef.current?.disconnect();

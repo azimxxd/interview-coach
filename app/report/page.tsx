@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import Link from "next/link";
 import { getSession, type InterviewTurn } from "@/lib/storage/session";
 import { useUi } from "@/components/UiProvider";
@@ -36,8 +36,7 @@ function aggregateNextFocus(turns: InterviewTurn[]) {
 
 export default function ReportPage() {
   const session = getSession();
-  const { t, language: uiLanguage } = useUi();
-  const [translations, setTranslations] = useState<Record<string, string>>({});
+  const { t } = useUi();
 
   const averages = useMemo(() => {
     if (!session) return {};
@@ -97,56 +96,6 @@ export default function ReportPage() {
     const picked = (low.length ? low : sorted.slice(0, 1)).slice(0, 3);
     return picked.map((item) => item.hint);
   }, [confidenceOverall]);
-
-  const needsTranslation = session
-    ? uiLanguage !== session.settings.language
-    : false;
-
-  useEffect(() => {
-    if (!session || !needsTranslation) {
-      setTranslations({});
-      return;
-    }
-
-    const unique = new Set<string>();
-    session.turns.forEach((turn) => {
-      if (turn.question) unique.add(turn.question);
-      if (turn.evaluation?.summary) unique.add(turn.evaluation.summary);
-      turn.evaluation?.next_focus?.forEach((item) => {
-        if (item) unique.add(item);
-      });
-    });
-
-    const texts = Array.from(unique);
-    if (!texts.length) {
-      setTranslations({});
-      return;
-    }
-
-    const controller = new AbortController();
-    fetch("/api/ai/translate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ texts, targetLanguage: uiLanguage }),
-      signal: controller.signal
-    })
-      .then((res) => res.json())
-      .then((data) => {
-        const list: string[] = Array.isArray(data?.translations)
-          ? data.translations
-          : [];
-        if (list.length !== texts.length) return;
-        const mapping: Record<string, string> = {};
-        texts.forEach((text, index) => {
-          const translated = list[index];
-          mapping[text] = translated || text;
-        });
-        setTranslations(mapping);
-      })
-      .catch(() => undefined);
-
-    return () => controller.abort();
-  }, [needsTranslation, session, uiLanguage]);
 
   if (!session) {
     return (
@@ -256,16 +205,11 @@ export default function ReportPage() {
             {session.turns.map((turn) => (
               <tr key={turn.id}>
                 <td>
-                  {needsTranslation
-                    ? translations[turn.question] ?? turn.question
-                    : turn.question}
+                  {turn.question}
                 </td>
                 <td>
                   {turn.evaluation?.summary
-                    ? needsTranslation
-                      ? translations[turn.evaluation.summary] ??
-                        turn.evaluation.summary
-                      : turn.evaluation.summary
+                    ? turn.evaluation.summary
                     : "-"}
                 </td>
                 <td>{turn.evaluation?.scores.delivery ?? "-"}</td>
@@ -287,9 +231,7 @@ export default function ReportPage() {
         {focusAreas.length ? (
           <ul>
             {focusAreas.map((item) => (
-              <li key={item}>
-                {needsTranslation ? translations[item] ?? item : item}
-              </li>
+              <li key={item}>{item}</li>
             ))}
           </ul>
         ) : (

@@ -1,17 +1,14 @@
 "use client";
 
-import type { Language } from "@/lib/types";
 import { DEFAULT_THEME_ID, type ThemeId } from "@/lib/theme";
 
 export type UiPreferences = {
-  language: Language;
   themeId: ThemeId;
 };
 
 const STORAGE_KEY = "ui_preferences_v1";
 
 const DEFAULT_PREFS: UiPreferences = {
-  language: "EN",
   themeId: DEFAULT_THEME_ID
 };
 

@@ -2,7 +2,7 @@ export type VoiceClientMessage =
   | {
       type: "hello";
       sessionId: string;
-      lang: "en" | "ru";
+      lang: "en";
       mode: "interviewer";
       role?: string;
       level?: string;

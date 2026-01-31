@@ -1,4 +1,4 @@
-﻿import type { InterviewSettings, Language, Level, Role } from "@/lib/types";
+import type { InterviewSettings, Language, Level, Role } from "@/lib/types";
 
 type TopicsByLanguage = Record<Language, string[]>;
 type TopicsByLevel = Record<Level, TopicsByLanguage>;
@@ -18,18 +18,6 @@ export const TOPICS: TopicsByRole = {
         "Fetching data with hooks and avoiding duplicate requests.",
         "Basic performance: when is memoization helpful?",
         "Write tests for a button or form - what must be covered?"
-      ],
-      RU: [
-        "Сверстать адаптивные карточки для мобайл/десктоп - какой подход в CSS?",
-        "Объясните lifting state vs local state на примере.",
-        "Как бы вы отлаживали проблему выравнивания во flexbox?",
-        "Валидация формы: что на клиенте, что на сервере?",
-        "Как обрабатываете состояния loading/empty/error для списка?",
-        "Как бы структурировали простой React-компонент и его пропсы?",
-        "Базовая доступность: label, фокус, клавиатура.",
-        "Получение данных хуками и защита от дублей запросов.",
-        "Базовая производительность: когда нужна мемоизация?",
-        "Тесты для кнопки/формы: что обязательно покрыть?"
       ]
     },
     Mid: {
@@ -44,18 +32,6 @@ export const TOPICS: TopicsByRole = {
         "Migration plan for a legacy UI to a new stack.",
         "How would you run an accessibility audit and fix issues?",
         "Rendering large lists: when and how to virtualize."
-      ],
-      RU: [
-        "Как внедрить дизайн-систему и обеспечить консистентность?",
-        "SSR vs CSR в Next.js для дашборда - компромиссы.",
-        "Кэш на клиенте и стратегия инвалидции (SWR/React Query).",
-        "Снижение размера бандла: code splitting и lazy-routes.",
-        "Архитектура сложной формы (multi-step, autosave).",
-        "Мониторинг ошибок и производительности фронтенда в проде.",
-        "Компромиссы управления состоянием (local/global/server).",
-        "План миграции легаси UI на новый стек.",
-        "Как провести аудит доступности и исправить проблемы?",
-        "Рендер больших списков и виртуализация."
       ]
     },
     Senior: {
@@ -70,18 +46,6 @@ export const TOPICS: TopicsByRole = {
         "Frontend security: XSS, CSP, auth flows.",
         "Mentoring, hiring, and leveling expectations.",
         "Roadmap vs tech debt: how do you make tradeoffs?"
-      ],
-      RU: [
-        "Архитектура фронтенда для большого продукта (границы модулей).",
-        "Как задаете и контролируете performance-budgets?",
-        "Стратегия дизайн-системы и темизации для нескольких команд.",
-        "План миграции от монолита к микрофронтам/Module Federation.",
-        "Как задаете quality bar и guardrails (lint, CI, perf)?",
-        "Как бы вели инцидент с фронтендом в проде?",
-        "API-контракты между командами и версионирование.",
-        "Безопасность на фронте (XSS, CSP, auth flows).",
-        "Менторинг и ожидания по грейдам.",
-        "Компромиссы: roadmap vs техдолг."
       ]
     }
   },
@@ -98,18 +62,6 @@ export const TOPICS: TopicsByRole = {
         "Communicate tradeoffs to stakeholders.",
         "Basic launch checklist for a new feature.",
         "Collect feedback after launch - what do you look at?"
-      ],
-      RU: [
-        "Как уточняете требования у стейкхолдера? Какие вопросы задаете?",
-        "Определите MVP для фичи при ограничениях.",
-        "Напишите user story и критерии приемки.",
-        "Как приоритизировать бэклог (RICE/MoSCoW)?",
-        "Какие метрики успеха зададите для фичи?",
-        "Как работать со scope creep в спринте?",
-        "Как синхронизируетесь с дизайном и разработкой?",
-        "Как объясняете компромиссы стейкхолдерам?",
-        "Базовый чек-лист перед запуском.",
-        "Как собирать обратную связь после релиза?"
       ]
     },
     Mid: {
@@ -124,18 +76,6 @@ export const TOPICS: TopicsByRole = {
         "Pricing or packaging considerations.",
         "Go-to-market coordination with marketing/sales.",
         "Leading a cross-timezone team."
-      ],
-      RU: [
-        "Компромиссы квартального roadmap и выравнивание.",
-        "Как поставить эксперимент для проверки спроса?",
-        "Как анализируете продуктовые метрики и делаете выводы?",
-        "Баланс платформенных и фичевых задач.",
-        "Как решаете конфликтующие запросы стейкхолдеров?",
-        "Процесс handoff от discovery к delivery.",
-        "Влияние инцидента на план/roadmap.",
-        "Ценообразование или упаковка - как подходите?",
-        "Координация go-to-market с маркетингом и продажами.",
-        "Как работаете с распределенной командой по часовым поясам?"
       ]
     },
     Senior: {
@@ -150,18 +90,6 @@ export const TOPICS: TopicsByRole = {
         "Risk management for major launches.",
         "Mentoring PMs and leveling expectations.",
         "Market analysis and competitive positioning."
-      ],
-      RU: [
-        "Как формируете продуктовую стратегию и North Star?",
-        "Как приоритизируете портфель между командами?",
-        "Как принимаете решение build vs buy?",
-        "Как строите систему метрик и отчетности?",
-        "Как выравниваетесь с руководством и коммуницируете наверх?",
-        "Как принимаете высокорисковые компромиссы (выручка vs ретеншн)?",
-        "Долгосрочное видение платформы и инвестиции.",
-        "Управление рисками больших запусков.",
-        "Менторинг PM и ожидания по грейдам.",
-        "Конкурентный анализ и позиционирование."
       ]
     }
   }

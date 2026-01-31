@@ -71,7 +71,7 @@ export default function ChatPanel({
             )}
             {turn.evaluation && (
               <div className="chat-bubble eval">
-                <strong>Coach:</strong> {turn.evaluation.summary}
+                <strong>{t("coachPrefix")}:</strong> {turn.evaluation.summary}
               </div>
             )}
           </div>

@@ -35,7 +35,7 @@ const DEFAULT_SETTINGS: InterviewSettings = {
   level: "Junior",
   language: "EN",
   storeLocal: false,
-  voiceInterviewer: false
+  questionCount: 8
 };
 
 let memorySession: InterviewSession | null = null;
@@ -63,14 +63,15 @@ function removeLocal(key: string) {
 }
 
 function normalizeSettings(settings: InterviewSettings): InterviewSettings {
-  return {
+  const merged = {
     ...DEFAULT_SETTINGS,
     ...settings,
-    voiceInterviewer:
-      typeof settings.voiceInterviewer === "boolean"
-        ? settings.voiceInterviewer
-        : DEFAULT_SETTINGS.voiceInterviewer
+    language: "EN"
   };
+  const questionCount = Number.isFinite(merged.questionCount)
+    ? merged.questionCount
+    : DEFAULT_SETTINGS.questionCount;
+  return { ...merged, questionCount };
 }
 
 export function getSettings(): InterviewSettings {
@@ -95,8 +96,9 @@ export function saveSettings(settings: InterviewSettings) {
 }
 
 export function createSession(settings: InterviewSettings): InterviewSession {
+  const normalized = normalizeSettings(settings);
   return {
-    settings,
+    settings: normalized,
     turns: [],
     startedAt: new Date().toISOString()
   };
@@ -106,16 +108,24 @@ export function getSession(): InterviewSession | null {
   if (memorySession) return memorySession;
   const stored = readLocal<InterviewSession>(STORAGE_KEY);
   if (stored) {
-    memorySession = stored;
-    return stored;
+    const normalized = {
+      ...stored,
+      settings: normalizeSettings(stored.settings)
+    };
+    memorySession = normalized;
+    return normalized;
   }
   return null;
 }
 
 export function saveSession(session: InterviewSession) {
-  memorySession = session;
-  if (session.settings.storeLocal) {
-    writeLocal(STORAGE_KEY, session);
+  const normalized = {
+    ...session,
+    settings: normalizeSettings(session.settings)
+  };
+  memorySession = normalized;
+  if (normalized.settings.storeLocal) {
+    writeLocal(STORAGE_KEY, normalized);
   } else {
     removeLocal(STORAGE_KEY);
   }

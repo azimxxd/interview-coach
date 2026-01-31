@@ -3,8 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { Language } from "@/lib/types";
 
-function langToCode(language: Language) {
-  return language === "RU" ? "ru-RU" : "en-US";
+function langToCode(_language: Language) {
+  return "en-US";
 }
 
 export function useSpeechToText(language: Language) {

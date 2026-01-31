@@ -1,6 +1,6 @@
 export type Role = "Frontend" | "PM";
 export type Level = "Junior" | "Mid" | "Senior";
-export type Language = "EN" | "RU";
+export type Language = "EN";
 
 export type DeliverySignals = {
   wpm: number;
@@ -16,5 +16,5 @@ export type InterviewSettings = {
   level: Level;
   language: Language;
   storeLocal: boolean;
-  voiceInterviewer?: boolean;
+  questionCount: number;
 };

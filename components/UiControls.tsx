@@ -6,7 +6,8 @@ import { THEMES } from "@/lib/theme";
 import { useUi } from "@/components/UiProvider";
 
 export default function UiControls() {
-  const { language, setLanguage, themeId, setThemeId, randomizeTheme, t } = useUi();
+  const { themeId, setThemeId, themeMode, setThemeMode, t } = useUi();
+  const filteredThemes = THEMES.filter((theme) => theme.mode === themeMode);
   const [isOpen, setIsOpen] = useState(false);
 
   return (
@@ -17,24 +18,26 @@ export default function UiControls() {
       </Link>
 
       <div className="top-actions">
-        <div className="language-toggle">
-          <span className="tiny">{t("pageLanguageLabel")}</span>
+        <div className="theme-mode-toggle">
+          <span className="tiny">{t("themeModeLabel")}</span>
           <div className="segmented">
             <button
               type="button"
-              className={language === "EN" ? "active" : ""}
-              onClick={() => setLanguage("EN")}
-              aria-pressed={language === "EN"}
+              className={themeMode === "light" ? "active" : ""}
+              onClick={() => setThemeMode("light")}
+              aria-pressed={themeMode === "light"}
             >
-              EN
+              <span className="mode-dot light" />
+              {t("themeLight")}
             </button>
             <button
               type="button"
-              className={language === "RU" ? "active" : ""}
-              onClick={() => setLanguage("RU")}
-              aria-pressed={language === "RU"}
+              className={themeMode === "dark" ? "active" : ""}
+              onClick={() => setThemeMode("dark")}
+              aria-pressed={themeMode === "dark"}
             >
-              RU
+              <span className="mode-dot dark" />
+              {t("themeDark")}
             </button>
           </div>
         </div>
@@ -63,7 +66,7 @@ export default function UiControls() {
             </div>
 
             <div className="palette-grid">
-              {THEMES.map((theme) => (
+              {filteredThemes.map((theme) => (
                 <button
                   key={theme.id}
                   type="button"
@@ -78,17 +81,17 @@ export default function UiControls() {
                     }}
                   />
                   <span className="palette-meta">
-                    <strong>{theme.label[language]}</strong>
+                    <strong>{theme.label}</strong>
                     <span className="tiny">{theme.vars["--accent"]}</span>
                   </span>
                 </button>
               ))}
+              {filteredThemes.length === 0 && (
+                <p className="tiny">{t("themeNoPalettes")}</p>
+              )}
             </div>
 
             <div className="controls">
-              <button className="btn btn-ghost" type="button" onClick={randomizeTheme}>
-                {t("themeRandom")}
-              </button>
               <button className="btn btn-primary" type="button" onClick={() => setIsOpen(false)}>
                 {t("themeClose")}
               </button>

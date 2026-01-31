@@ -1,12 +1,10 @@
 import asyncio
 import base64
 import json
-import os
 from typing import Any, Dict
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
-from moshi_proxy import MoshiProxy
 from personaplex_runner import PersonaPlexRunner
 
 app = FastAPI()
@@ -22,24 +20,13 @@ def _chunk_audio(pcm_bytes: bytes, sample_rate: int, chunk_ms: int = 200):
 
 @app.on_event("startup")
 def _startup():
-    proxy_url = os.getenv("PERSONAPLEX_PROXY_URL") or os.getenv("MOSHI_SERVER_URL")
-    if proxy_url:
-        app.state.proxy = MoshiProxy(proxy_url)
-        app.state.runner = None
-    else:
-        app.state.proxy = None
-        app.state.runner = PersonaPlexRunner()
+    app.state.runner = PersonaPlexRunner()
 
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
     await ws.send_json({"type": "ready"})
-
-    proxy: MoshiProxy | None = getattr(app.state, "proxy", None)
-    if proxy is not None:
-        await proxy.handle_session(ws)
-        return
 
     session_audio = bytearray()
     context: Dict[str, Any] = {}

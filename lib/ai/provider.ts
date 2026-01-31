@@ -36,33 +36,19 @@ function trimToMaxWords(text: string, maxWords: number) {
   return words.slice(0, maxWords).join(" ").replace(/[.?!]+$/, "").trim();
 }
 
-function roleLabel(role: Role, language: Language) {
-  if (language === "RU") {
-    return role === "Frontend" ? "фронтенд-инженер" : "продакт-менеджер";
-  }
+function roleLabel(role: Role) {
   return role === "Frontend" ? "frontend engineer" : "product manager";
 }
 
-function levelLabel(level: Level, language: Language) {
-  if (language === "RU") {
-    if (level === "Senior") return "сеньор";
-    return level === "Junior" ? "джуниор" : "мидл";
-  }
+function levelLabel(level: Level) {
   if (level === "Senior") return "senior";
   return level === "Junior" ? "junior" : "mid";
 }
 
 function buildMockQuestion(payload: InterviewerPayload) {
-  const { language, topic, role, level } = payload;
-  if (language === "RU") {
-    return `Как бы вы подошли к теме "${topic}" как ${levelLabel(
-      level,
-      language
-    )} ${roleLabel(role, language)}?`;
-  }
-  return `As a ${levelLabel(level, language)} ${roleLabel(
-    role,
-    language
+  const { topic, role, level } = payload;
+  return `As a ${levelLabel(level)} ${roleLabel(
+    role
   )}, how would you approach ${topic}?`;
 }
 
@@ -73,116 +59,63 @@ function clampScore(value: number) {
 export function buildFallbackEvaluation(
   signals: DeliverySignals,
   transcript: string,
-  language: Language = "EN"
+  _language: Language = "EN"
 ): EvalResult {
   const wordCount = transcript.split(/\s+/).filter(Boolean).length;
   const isEmpty = wordCount === 0;
   const isTooShort = wordCount < 10;
 
-  const copy =
-    language === "RU"
-      ? {
-          summaryOk:
-            "Неплохая база. Подача понятная, но можно усилить структуру и факты. Держите ровный темп и меньше слов-паразитов.",
-          summaryShort: "Ответ слишком короткий для оценки. Дайте полный ответ.",
-          summaryEmpty:
-            "Ответ отсутствует. Дайте полный ответ, чтобы получить фидбек.",
-          strengthsShort: [
-            "Нет сильных сторон: ответ слишком короткий.",
-            "Нужен полный ответ для оценки."
-          ],
-          issuesShort: [
-            "Недостаточно содержания.",
-            "Добавьте структуру: тезис -> аргументы -> пример."
-          ],
-          improvementsShort: [
-            "Дайте полный ответ (2-4 ключевых пункта).",
-            "Добавьте один конкретный пример или метрику.",
-            "Сформулируйте вывод."
-          ],
-          betterAnswerShort:
-            "Дайте план, 2-3 ключевых пункта, один пример и чёткий вывод.",
-          focusShort: [
-            "Дать полный ответ",
-            "Добавить структуру",
-            "Добавить пример"
-          ],
-          strengthDetailLong: "Ответ содержит достаточно деталей.",
-          strengthDetailShort: "Ответ краткий и по делу.",
-          strengthPace: "Темп речи комфортный.",
-          strengthDelivery: "Подача понятная.",
-          strengthFiller: "Слова-паразиты под контролем.",
-          strengthPause: "Паузы в норме.",
-          issueTradeoffs: "Обозначьте компромиссы.",
-          issueExample: "Добавьте конкретный пример или метрику.",
-          issuePace: "Отрегулируйте темп речи.",
-          issueFiller: "Сократите слова-паразиты.",
-          issuePauses: "Сократите длинные паузы.",
-          strengthFallback: "Ответ остаётся по теме.",
-          issueFallback: "Добавьте более чёткую структуру (2-3 шага).",
-          improvements: [
-            "Сначала краткий план из 2-3 шагов, затем детали.",
-            "Добавьте один конкретный пример или метрику.",
-            "Следите за словами-паразитами и паузами."
-          ],
-          betterAnswer:
-            "Начните с короткого плана, разберите ключевые решения, добавьте пример и завершите компромиссом или выводом.",
-          focusPace: "Отрегулировать темп речи",
-          focusFiller: "Сократить слова-паразиты",
-          focusTradeoffs: "Явно обозначить компромиссы",
-          focusEvidence: "Добавить ясные доказательства"
-        }
-      : {
-          summaryOk:
-            "Solid baseline. Delivery is understandable, but you can tighten structure and add clearer evidence. Keep pace steady and reduce filler spikes.",
-          summaryShort: "Answer is too short to evaluate. Provide a full response.",
-          summaryEmpty:
-            "No answer provided. Provide a full response to receive feedback.",
-          strengthsShort: [
-            "No strengths identified - answer is too short.",
-            "Provide a complete response for a proper evaluation."
-          ],
-          issuesShort: [
-            "Answer lacks content.",
-            "Add structure: thesis -> reasoning -> example."
-          ],
-          improvementsShort: [
-            "Provide a full answer (2-4 key points).",
-            "Add one concrete example or metric.",
-            "State your conclusion clearly."
-          ],
-          betterAnswerShort:
-            "Give a concise plan, 2-3 key points, one example, and a clear conclusion.",
-          focusShort: [
-            "Provide a complete answer",
-            "Add structure",
-            "Add one example"
-          ],
-          strengthDetailLong: "Provides sufficient detail.",
-          strengthDetailShort: "Keeps the answer concise.",
-          strengthPace: "Speaking pace is in a clear range.",
-          strengthDelivery: "Delivery is understandable.",
-          strengthFiller: "Filler usage is controlled.",
-          strengthPause: "Pauses are mostly controlled.",
-          issueTradeoffs: "Make tradeoffs explicit.",
-          issueExample: "Add one concrete example or metric.",
-          issuePace: "Calibrate speaking pace.",
-          issueFiller: "Reduce filler words.",
-          issuePauses: "Reduce long pauses.",
-          strengthFallback: "Answer stays relevant to the question.",
-          issueFallback: "Add clearer structure with 2-3 steps.",
-          improvements: [
-            "Structure the answer into 2-3 clear steps before details.",
-            "Add one concrete example or metric to support your point.",
-            "Watch filler words and keep pauses intentional."
-          ],
-          betterAnswer:
-            "Start with a concise plan, walk through key decisions, add a concrete example, and close with the tradeoff you accepted and why.",
-          focusPace: "Calibrate speaking pace",
-          focusFiller: "Reduce filler words",
-          focusTradeoffs: "Make tradeoffs explicit",
-          focusEvidence: "Add clear evidence"
-        };
+  const copy = {
+    summaryOk:
+      "Solid baseline. Delivery is understandable, but you can tighten structure and add clearer evidence. Keep pace steady and reduce filler spikes.",
+    summaryShort: "Answer is too short to evaluate. Provide a full response.",
+    summaryEmpty:
+      "No answer provided. Provide a full response to receive feedback.",
+    strengthsShort: [
+      "No strengths identified - answer is too short.",
+      "Provide a complete response for a proper evaluation."
+    ],
+    issuesShort: [
+      "Answer lacks content.",
+      "Add structure: thesis -> reasoning -> example."
+    ],
+    improvementsShort: [
+      "Provide a full answer (2-4 key points).",
+      "Add one concrete example or metric.",
+      "State your conclusion clearly."
+    ],
+    betterAnswerShort:
+      "Give a concise plan, 2-3 key points, one example, and a clear conclusion.",
+    focusShort: [
+      "Provide a complete answer",
+      "Add structure",
+      "Add one example"
+    ],
+    strengthDetailLong: "Provides sufficient detail.",
+    strengthDetailShort: "Keeps the answer concise.",
+    strengthPace: "Speaking pace is in a clear range.",
+    strengthDelivery: "Delivery is understandable.",
+    strengthFiller: "Filler usage is controlled.",
+    strengthPause: "Pauses are mostly controlled.",
+    issueTradeoffs: "Make tradeoffs explicit.",
+    issueExample: "Add one concrete example or metric.",
+    issuePace: "Calibrate speaking pace.",
+    issueFiller: "Reduce filler words.",
+    issuePauses: "Reduce long pauses.",
+    strengthFallback: "Answer stays relevant to the question.",
+    issueFallback: "Add clearer structure with 2-3 steps.",
+    improvements: [
+      "Structure the answer into 2-3 clear steps before details.",
+      "Add one concrete example or metric to support your point.",
+      "Watch filler words and keep pauses intentional."
+    ],
+    betterAnswer:
+      "Start with a concise plan, walk through key decisions, add a concrete example, and close with the tradeoff you accepted and why.",
+    focusPace: "Calibrate speaking pace",
+    focusFiller: "Reduce filler words",
+    focusTradeoffs: "Make tradeoffs explicit",
+    focusEvidence: "Add clear evidence"
+  };
 
   if (isTooShort) {
     const lowScore = isEmpty ? 1 : 2;
@@ -375,9 +308,6 @@ export async function getEvaluation(payload: EvaluatorPayload) {
   }
   return parsed;
 }
-
-
-
 
 
 
