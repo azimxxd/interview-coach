@@ -63,7 +63,7 @@ function removeLocal(key: string) {
 }
 
 function normalizeSettings(settings: InterviewSettings): InterviewSettings {
-  const merged = {
+  const merged: InterviewSettings = {
     ...DEFAULT_SETTINGS,
     ...settings,
     language: "EN"
@@ -71,7 +71,7 @@ function normalizeSettings(settings: InterviewSettings): InterviewSettings {
   const questionCount = Number.isFinite(merged.questionCount)
     ? merged.questionCount
     : DEFAULT_SETTINGS.questionCount;
-  return { ...merged, questionCount };
+  return { ...merged, language: "EN", questionCount };
 }
 
 export function getSettings(): InterviewSettings {

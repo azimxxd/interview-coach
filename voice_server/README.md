@@ -1,90 +1,65 @@
-# Voice Server (PersonaPlex-7B)
+# Voice Server (PersonaPlex Full Voice Mode)
 
-This server provides a local WebSocket endpoint for voice interviewer audio.
-It is optional; if not running, the web app falls back to text-only questions.
+This app is expected to run in **proxy mode** against NVIDIA `moshi.server`.
+For full voice mode, `PERSONAPLEX_MOCK=0` alone is not enough.
 
-## Setup
+## 1) Install proxy dependencies (once)
 
 ```bash
 cd voice_server
-python -m venv .venv
-.\.venv\Scripts\activate
+python3 -m venv venv
+source venv/bin/activate
+python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-## Model access
+## 2) Start PersonaPlex/Moshi (terminal A)
 
-PersonaPlex is gated. You must accept the license and login:
+Use your existing PersonaPlex checkout:
 
 ```bash
-huggingface-cli login
+cd ~/personaplex
+source .venv/bin/activate
+hf auth login
+SSL_DIR=$(mktemp -d)
+python -m moshi.server --ssl "$SSL_DIR" --device cpu
 ```
 
-Set the model ID (optional):
+If you have a small GPU and CPU offload support installed, try this first:
 
 ```bash
-set PERSONAPLEX_MODEL=nvidia/personaplex-7b-v1
+python -m moshi.server --ssl "$SSL_DIR" --device cuda --cpu-offload
 ```
 
-## Run (mock mode)
-
-Mock mode returns a short beep for audio. This is useful for UI testing without GPU:
+## 3) Start this proxy server (terminal B)
 
 ```bash
-set PERSONAPLEX_MOCK=1
+cd /home/azimxd/projects/interview-coach/voice_server
+source venv/bin/activate
+export PERSONAPLEX_PROXY_URL="https://127.0.0.1:8998/api/chat?voice_prompt=NATF2.pt&text_prompt=You%20are%20a%20wise%20and%20friendly%20teacher.%20Ask%20one%20short%20interview%20question."
+export MOSHI_INSECURE=1
 uvicorn main:app --host 127.0.0.1 --port 8008
 ```
 
-## Run (GPU mode)
+## 4) Start web app (terminal C)
 
 ```bash
-set PERSONAPLEX_MOCK=0
-uvicorn main:app --host 127.0.0.1 --port 8008
+cd /home/azimxd/projects/interview-coach
+npm run dev
 ```
 
-If no NVIDIA GPU is detected, the server raises an error.
+Open `http://127.0.0.1:3000`.
 
-## Proxy mode (Option A: official PersonaPlex/Moshi server)
-
-If you are running the official PersonaPlex/Moshi server, this proxy can
-forward audio to it and stream audio/text back to the web app.
-
-1) Start the official server (see the NVIDIA PersonaPlex repo for setup).
-   It typically exposes a WebSocket at `ws://127.0.0.1:8998/api/chat`.
-
-2) Run this proxy with a server URL:
+## 5) Verify ports
 
 ```bash
-set PERSONAPLEX_PROXY_URL=ws://127.0.0.1:8998/api/chat
-uvicorn main:app --host 127.0.0.1 --port 8008
+ss -ltnp | rg ':8998|:8008|:3000'
 ```
 
-Notes:
-- You can also use `MOSHI_SERVER_URL` instead of `PERSONAPLEX_PROXY_URL`.
-- If your official server uses HTTPS with a self-signed cert, set:
-  `set MOSHI_INSECURE=1`
-- The proxy expects 16kHz PCM input from the browser and resamples to 24kHz for
-  the official server.
+You should see all three ports listening.
 
-## Protocol
+## Runtime notes
 
-WebSocket endpoint: `ws://127.0.0.1:8008/ws`
-
-Client -> Server:
-- `{ "type": "hello", "sessionId": "...", "lang": "en"|"ru", "mode": "interviewer" }`
-- `{ "type": "context", "role": "...", "level": "...", "topic": "...", "previous": [...] }`
-- `{ "type": "audio", "format": "pcm16", "sampleRate": 16000, "channels": 1, "data": "<base64>" }`
-- `{ "type": "end_utterance" }`
-- `{ "type": "reset" }`
-
-Server -> Client:
-- `{ "type": "ready" }`
-- `{ "type": "audio_out", "format": "pcm16", "sampleRate": 16000, "channels": 1, "data": "<base64>" }`
-- `{ "type": "text_out", "text": "..." }`
-- `{ "type": "error", "message": "..." }`
-
-## Notes
-
-- The current `personaplex_runner.py` includes a mock response and placeholder
-  for real PersonaPlex audio generation. Integrate the official NVIDIA pipeline
-  for full quality voice generation.
+- CPU mode is slow. First coach turn can take **2-3 minutes**.
+- Proxy endpoint used by frontend: `ws://127.0.0.1:8008/ws`
+- If voice stalls, restart both backend processes (`8998` then `8008`) and retry.

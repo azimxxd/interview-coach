@@ -4,6 +4,7 @@ out
 .env.local
 .venv
 voice_server/.venv
+voice_server/venv
 __pycache__/
 *.pyc
 .DS_Store

@@ -56,16 +56,45 @@ class PersonaPlexRunner:
         You must install the official NVIDIA PersonaPlex repo or Hugging Face model.
         """
         try:
-            from transformers import AutoModelForCausalLM, AutoTokenizer
+            from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
-            self._tokenizer = AutoTokenizer.from_pretrained(self.config.model_id)
+            try:
+                AutoConfig.from_pretrained(self.config.model_id)
+            except ValueError as cfg_exc:
+                cfg_msg = str(cfg_exc)
+                if "model type `personaplex`" in cfg_msg or "model type personaplex" in cfg_msg:
+                    raise RuntimeError(
+                        "Local Transformers loading for `nvidia/personaplex-7b-v1` is not "
+                        "supported by this server path. Use proxy mode with an official "
+                        "PersonaPlex/Moshi server (`PERSONAPLEX_PROXY_URL`), or run "
+                        "mock mode (`PERSONAPLEX_MOCK=1`)."
+                    ) from cfg_exc
+                raise
+
+            # Prefer slow tokenizer to avoid unnecessary fast-tokenizer conversion
+            # dependencies (e.g. tiktoken) for gated model setups.
+            self._tokenizer = AutoTokenizer.from_pretrained(
+                self.config.model_id, use_fast=False
+            )
             self._model = AutoModelForCausalLM.from_pretrained(
                 self.config.model_id, device_map="auto"
             )
+        except RuntimeError:
+            raise
         except Exception as exc:
+            root = str(exc)
+            if "model type `personaplex`" in root or "model type personaplex" in root:
+                raise RuntimeError(
+                    "Local Transformers loading for `nvidia/personaplex-7b-v1` is not "
+                    "supported by this server path. Use proxy mode with an official "
+                    "PersonaPlex/Moshi server (`PERSONAPLEX_PROXY_URL`), or run "
+                    "mock mode (`PERSONAPLEX_MOCK=1`)."
+                ) from exc
             raise RuntimeError(
                 "Failed to load PersonaPlex model. Ensure you have access to "
-                f"{self.config.model_id} and have run `huggingface-cli login`."
+                f"{self.config.model_id} and have run `hf auth login` "
+                "(or `huggingface-cli login`). Also ensure tokenizer deps are "
+                "installed: `sentencepiece` and `protobuf`."
             ) from exc
 
     def _mock_text(self, context: Dict[str, str]) -> str:

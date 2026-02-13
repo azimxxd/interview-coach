@@ -97,8 +97,7 @@ class MoshiProxy:
             kind = message[0]
             payload = message[1:]
             if kind == 1:
-                reader.append_bytes(payload)
-                pcm = reader.read_pcm()
+                pcm = self._reader_append(reader, payload)
                 if pcm is None or pcm.size == 0:
                     continue
                 buffered_audio = (
@@ -124,7 +123,13 @@ class MoshiProxy:
 
     async def handle_session(self, ws_client) -> None:
         ssl_context = self._ssl_context()
-        async with websockets.connect(self.server_url, ssl=ssl_context) as ws_moshi:
+        async with websockets.connect(
+            self.server_url,
+            ssl=ssl_context,
+            ping_interval=None,
+            ping_timeout=None,
+            max_size=None,
+        ) as ws_moshi:
             writer = sphn.OpusStreamWriter(self.sample_rate)
             forward_task = asyncio.create_task(self._forward_from_moshi(ws_moshi, ws_client))
 
@@ -150,8 +155,7 @@ class MoshiProxy:
                             continue
                         pcm = _bytes_to_float32(pcm_bytes)
                         pcm = _resample_linear(pcm, input_rate, self.sample_rate)
-                        writer.append_pcm(pcm)
-                        encoded = writer.read_bytes()
+                        encoded = self._writer_append(writer, pcm)
                         if encoded:
                             await ws_moshi.send(b"\x01" + encoded)
                     elif msg_type == "reset":
@@ -170,3 +174,21 @@ class MoshiProxy:
                 forward_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await forward_task
+
+    @staticmethod
+    def _reader_append(reader, payload: bytes):
+        # sphn 0.1.x: append_bytes + read_pcm()
+        # sphn 0.2.x: append_bytes() -> pcm
+        result = reader.append_bytes(payload)
+        if hasattr(reader, "read_pcm"):
+            return reader.read_pcm()
+        return result
+
+    @staticmethod
+    def _writer_append(writer, pcm: np.ndarray) -> bytes:
+        # sphn 0.1.x: append_pcm() + read_bytes()
+        # sphn 0.2.x: append_pcm() -> bytes
+        result = writer.append_pcm(pcm)
+        if hasattr(writer, "read_bytes"):
+            return writer.read_bytes()
+        return result

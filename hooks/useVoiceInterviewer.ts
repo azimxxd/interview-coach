@@ -18,10 +18,14 @@ type VoiceInterviewerConfig = {
   onWarning: (message: string) => void;
 };
 
-type PendingAudio = {
-  data: string;
-  sampleRate: number;
+type RequestCoachTurnOptions = {
+  timeoutMs?: number;
+  silenceMs?: number;
 };
+
+const DEFAULT_WAIT_MS = 180000;
+const DEFAULT_SILENCE_MS = 1200;
+const AUDIO_TEXT_GRACE_MS = 6000;
 
 function base64ToInt16(base64: string) {
   const binary = atob(base64);
@@ -50,8 +54,8 @@ function downsampleTo16k(buffer: Float32Array, inputRate: number) {
 function floatTo16BitPCM(float32: Float32Array) {
   const output = new Int16Array(float32.length);
   for (let i = 0; i < float32.length; i += 1) {
-    const s = Math.max(-1, Math.min(1, float32[i]));
-    output[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+    const sample = Math.max(-1, Math.min(1, float32[i]));
+    output[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
   }
   return output;
 }
@@ -65,6 +69,19 @@ function pcm16ToBase64(pcm: Int16Array) {
   return btoa(binary);
 }
 
+function silenceChunkBase64(durationMs: number) {
+  const sampleCount = Math.max(1, Math.round((16000 * durationMs) / 1000));
+  const pcm = new Int16Array(sampleCount);
+  return pcm16ToBase64(pcm);
+}
+
+function buildFallbackCoachText(context: VoiceContext) {
+  const topic = context.topic?.trim() || "a recent project";
+  const level = context.level?.trim() || "your";
+  const role = context.role?.trim() || "role";
+  return `Tell me about ${topic} from your ${level} ${role} experience.`;
+}
+
 export function useVoiceInterviewer({
   enabled,
   stream,
@@ -72,16 +89,21 @@ export function useVoiceInterviewer({
 }: VoiceInterviewerConfig) {
   const [status, setStatus] = useState<VoiceStatus>("idle");
   const [isPlaying, setIsPlaying] = useState(false);
-  const [pendingText, setPendingText] = useState<string | null>(null);
-  const pendingTextRef = useRef<string | null>(null);
-  const pendingAudioRef = useRef<PendingAudio[]>([]);
-  const playOnReceiveRef = useRef(false);
+
+  const onWarningRef = useRef(onWarning);
+  const textQueueRef = useRef<string[]>([]);
+  const audioOutCountRef = useRef(0);
+  const closedByUserRef = useRef(false);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const playbackTimeRef = useRef(0);
   const playTimeoutRef = useRef<number | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const captureCtxRef = useRef<AudioContext | null>(null);
   const clientRef = useRef<VoiceWsClient | null>(null);
+
+  useEffect(() => {
+    onWarningRef.current = onWarning;
+  }, [onWarning]);
 
   const wsUrl = useMemo(() => "ws://127.0.0.1:8008/ws", []);
 
@@ -103,11 +125,13 @@ export function useVoiceInterviewer({
     source.start(startAt);
     playbackTimeRef.current = startAt + buffer.duration;
     setIsPlaying(true);
-    if (playTimeoutRef.current) window.clearTimeout(playTimeoutRef.current);
+    if (playTimeoutRef.current) {
+      window.clearTimeout(playTimeoutRef.current);
+    }
     const remainingMs = Math.max(0, (playbackTimeRef.current - ctx.currentTime) * 1000);
     playTimeoutRef.current = window.setTimeout(() => {
       setIsPlaying(false);
-    }, remainingMs + 30);
+    }, remainingMs + 80);
   }, []);
 
   const handleServerMessage = useCallback(
@@ -117,40 +141,41 @@ export function useVoiceInterviewer({
         return;
       }
       if (message.type === "text_out") {
-        pendingTextRef.current = message.text;
-        setPendingText(message.text);
-        return;
-      }
-      if (message.type === "audio_out") {
-        const sampleRate = Number(message.sampleRate || 16000);
-        if (playOnReceiveRef.current) {
-          schedulePlayback(base64ToInt16(message.data), sampleRate);
-        } else {
-          pendingAudioRef.current.push({ data: message.data, sampleRate });
+        if (message.text) {
+          textQueueRef.current.push(String(message.text));
         }
         return;
       }
+      if (message.type === "audio_out") {
+        audioOutCountRef.current += 1;
+        const sampleRate = Number(message.sampleRate || 16000);
+        schedulePlayback(base64ToInt16(message.data), sampleRate);
+        return;
+      }
       if (message.type === "error") {
-        onWarning(message.message);
+        onWarningRef.current(message.message || "Voice server error.");
         setStatus("error");
       }
     },
-    [onWarning, schedulePlayback]
+    [schedulePlayback]
   );
 
   const connect = useCallback(async () => {
     if (!enabled) return false;
     if (clientRef.current?.isOpen()) return true;
+    closedByUserRef.current = false;
     setStatus("connecting");
     try {
       const client = new VoiceWsClient(wsUrl, {
         onMessage: handleServerMessage,
-        onError: (msg) => {
-          onWarning(msg);
+        onError: (message) => {
+          onWarningRef.current(message);
           setStatus("error");
         },
         onClose: () => {
-          if (enabled) setStatus("error");
+          if (!closedByUserRef.current && enabled) {
+            setStatus("error");
+          }
         }
       });
       clientRef.current = client;
@@ -163,15 +188,21 @@ export function useVoiceInterviewer({
       });
       setStatus("ready");
       return true;
-    } catch (err) {
+    } catch {
       setStatus("error");
       return false;
     }
-  }, [enabled, handleServerMessage, onWarning, wsUrl]);
+  }, [enabled, handleServerMessage, wsUrl]);
 
   const disconnect = useCallback(() => {
+    closedByUserRef.current = true;
     clientRef.current?.disconnect();
     clientRef.current = null;
+    if (playTimeoutRef.current) {
+      window.clearTimeout(playTimeoutRef.current);
+      playTimeoutRef.current = null;
+    }
+    setIsPlaying(false);
     setStatus("idle");
   }, []);
 
@@ -181,17 +212,113 @@ export function useVoiceInterviewer({
       return;
     }
     connect();
+    return () => {
+      disconnect();
+    };
   }, [connect, disconnect, enabled]);
+
+  const sendContext = useCallback((context: VoiceContext) => {
+    if (!clientRef.current?.isOpen()) return;
+    clientRef.current.send({ type: "context", ...context });
+  }, []);
+
+  const sendSilence = useCallback((totalMs: number) => {
+    if (!clientRef.current?.isOpen()) return;
+    const chunkMs = 200;
+    const chunks = Math.max(1, Math.ceil(totalMs / chunkMs));
+    const data = silenceChunkBase64(chunkMs);
+    for (let i = 0; i < chunks; i += 1) {
+      clientRef.current.send({
+        type: "audio",
+        format: "pcm16",
+        sampleRate: 16000,
+        channels: 1,
+        data
+      });
+    }
+  }, []);
+
+  const endUtterance = useCallback(() => {
+    if (!clientRef.current?.isOpen()) return;
+    clientRef.current.send({ type: "end_utterance" });
+  }, []);
+
+  const waitForCoachOutput = useCallback(
+    async (timeoutMs: number, audioStartCount: number) => {
+      const startedAt = Date.now();
+      let audioDetectedAt: number | null = null;
+
+      while (Date.now() - startedAt < timeoutMs) {
+        const next = textQueueRef.current.shift();
+        if (next) return { text: next, audioSeen: true };
+
+        if (audioOutCountRef.current > audioStartCount) {
+          if (!audioDetectedAt) {
+            audioDetectedAt = Date.now();
+          } else if (Date.now() - audioDetectedAt >= AUDIO_TEXT_GRACE_MS) {
+            return { text: null, audioSeen: true };
+          }
+        }
+
+        await new Promise((resolve) => window.setTimeout(resolve, 120));
+      }
+
+      return {
+        text: null,
+        audioSeen: audioOutCountRef.current > audioStartCount
+      };
+    },
+    []
+  );
+
+  const requestCoachTurn = useCallback(
+    async (context: VoiceContext, options?: RequestCoachTurnOptions) => {
+      if (!enabled || !clientRef.current?.isOpen()) {
+        return { text: null, usedVoice: false };
+      }
+      const timeoutMs = options?.timeoutMs ?? DEFAULT_WAIT_MS;
+      const silenceMs = options?.silenceMs ?? 0;
+      const audioStartCount = audioOutCountRef.current;
+      textQueueRef.current = [];
+      sendContext(context);
+      if (silenceMs > 0) {
+        sendSilence(silenceMs);
+      }
+      endUtterance();
+      const output = await waitForCoachOutput(timeoutMs, audioStartCount);
+      const text = output.text?.trim() ? output.text : null;
+      if (text) {
+        return { text, usedVoice: true };
+      }
+      if (output.audioSeen) {
+        return { text: buildFallbackCoachText(context), usedVoice: true };
+      }
+      return { text: null, usedVoice: true };
+    },
+    [enabled, endUtterance, sendContext, sendSilence, waitForCoachOutput]
+  );
+
+  const requestOpeningQuestion = useCallback(
+    async (context: VoiceContext) => {
+      return requestCoachTurn(context, {
+        silenceMs: DEFAULT_SILENCE_MS,
+        timeoutMs: DEFAULT_WAIT_MS
+      });
+    },
+    [requestCoachTurn]
+  );
 
   const startCapture = useCallback(async () => {
     if (!enabled || !stream || !clientRef.current?.isOpen()) return;
     if (processorRef.current) return;
+
     const ctx = new AudioContext();
     captureCtxRef.current = ctx;
     const source = ctx.createMediaStreamSource(stream);
     const processor = ctx.createScriptProcessor(4096, 1, 1);
     const gain = ctx.createGain();
     gain.gain.value = 0;
+
     processor.onaudioprocess = (event) => {
       const input = event.inputBuffer.getChannelData(0);
       const downsampled = downsampleTo16k(input, ctx.sampleRate);
@@ -205,6 +332,7 @@ export function useVoiceInterviewer({
         data
       });
     };
+
     source.connect(processor);
     processor.connect(gain);
     gain.connect(ctx.destination);
@@ -226,65 +354,16 @@ export function useVoiceInterviewer({
     }
   }, []);
 
-  const endUtterance = useCallback(() => {
-    if (!enabled || !clientRef.current?.isOpen()) return;
-    playOnReceiveRef.current = false;
-    clientRef.current.send({ type: "end_utterance" });
-  }, [enabled]);
-
-  const requestQuestion = useCallback(
-    async (context: VoiceContext) => {
-      if (!enabled || !clientRef.current?.isOpen()) return { text: null, usedVoice: false };
-
-      const hasPending = pendingAudioRef.current.length > 0;
-      if (hasPending) {
-        playOnReceiveRef.current = true;
-        pendingAudioRef.current.forEach((chunk) => {
-          schedulePlayback(base64ToInt16(chunk.data), chunk.sampleRate);
-        });
-        pendingAudioRef.current = [];
-        const text = pendingTextRef.current;
-        pendingTextRef.current = null;
-        setPendingText(null);
-        return { text, usedVoice: true };
-      }
-
-      playOnReceiveRef.current = true;
-      pendingTextRef.current = null;
-      setPendingText(null);
-      clientRef.current.send({ type: "context", ...context });
-      clientRef.current.send({ type: "end_utterance" });
-
-      const waitForText = new Promise<string | null>((resolve) => {
-        const timeout = window.setTimeout(() => resolve(null), 1200);
-        const check = () => {
-          if (pendingTextRef.current) {
-            window.clearTimeout(timeout);
-            resolve(pendingTextRef.current);
-            return;
-          }
-          window.setTimeout(check, 100);
-        };
-        check();
-      });
-      const text = await waitForText;
-      if (text) {
-        pendingTextRef.current = null;
-        setPendingText(null);
-      }
-      return { text, usedVoice: true };
-    },
-    [enabled, schedulePlayback]
-  );
-
   const reset = useCallback(() => {
-    pendingAudioRef.current = [];
-    pendingTextRef.current = null;
-    setPendingText(null);
-    playOnReceiveRef.current = false;
+    textQueueRef.current = [];
     if (clientRef.current?.isOpen()) {
       clientRef.current.send({ type: "reset" });
     }
+    if (playTimeoutRef.current) {
+      window.clearTimeout(playTimeoutRef.current);
+      playTimeoutRef.current = null;
+    }
+    setIsPlaying(false);
   }, []);
 
   return {
@@ -296,7 +375,8 @@ export function useVoiceInterviewer({
     startCapture,
     stopCapture,
     endUtterance,
-    requestQuestion,
+    requestCoachTurn,
+    requestOpeningQuestion,
     reset
   };
 }

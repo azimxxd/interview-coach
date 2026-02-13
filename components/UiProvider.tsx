@@ -11,18 +11,16 @@ import {
 } from "react";
 import {
   applyTheme,
+  DARK_THEME_ID,
   DEFAULT_THEME_ID,
-  getThemeById,
+  LIGHT_THEME_ID,
   getThemeMode,
-  type ThemeId,
   type ThemeMode
 } from "@/lib/theme";
 import { getUiPreferences, saveUiPreferences } from "@/lib/storage/preferences";
 import { getCopy, type UiCopyKey } from "@/lib/i18n";
 
 type UiContextValue = {
-  themeId: ThemeId;
-  setThemeId: (themeId: ThemeId) => void;
   themeMode: ThemeMode;
   setThemeMode: (mode: ThemeMode) => void;
   t: (key: UiCopyKey) => string;
@@ -31,18 +29,14 @@ type UiContextValue = {
 const UiContext = createContext<UiContextValue | null>(null);
 
 export function UiProvider({ children }: { children: React.ReactNode }) {
-  const [themeId, setThemeIdState] = useState<ThemeId>(DEFAULT_THEME_ID);
-  const lightThemeRef = useRef<ThemeId>(DEFAULT_THEME_ID);
-  const darkThemeRef = useRef<ThemeId>("midnight");
+  const [themeId, setThemeIdState] = useState(DEFAULT_THEME_ID);
   const hasHydrated = useRef(false);
 
   useEffect(() => {
     const prefs = getUiPreferences();
-    const theme = getThemeById(prefs.themeId as ThemeId);
-    setThemeIdState(theme.id);
-    if (theme.mode === "light") lightThemeRef.current = theme.id;
-    if (theme.mode === "dark") darkThemeRef.current = theme.id;
-    applyTheme(theme.id);
+    const nextTheme = getThemeMode(prefs.themeId) === "dark" ? DARK_THEME_ID : LIGHT_THEME_ID;
+    setThemeIdState(nextTheme);
+    applyTheme(nextTheme);
     if (typeof document !== "undefined") {
       document.documentElement.lang = "en";
     }
@@ -63,35 +57,26 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
     return (key: UiCopyKey) => copy[key];
   }, []);
 
-  const setThemeId = useCallback((next: ThemeId) => {
-    const theme = getThemeById(next);
-    setThemeIdState(theme.id);
-    if (theme.mode === "light") lightThemeRef.current = theme.id;
-    if (theme.mode === "dark") darkThemeRef.current = theme.id;
-  }, []);
-
   const themeMode: ThemeMode = getThemeMode(themeId);
 
   const setThemeMode = useCallback(
     (mode: ThemeMode) => {
       if (mode === "dark") {
-        setThemeIdState(darkThemeRef.current);
+        setThemeIdState(DARK_THEME_ID);
         return;
       }
-      setThemeIdState(lightThemeRef.current);
+      setThemeIdState(LIGHT_THEME_ID);
     },
     []
   );
 
   const value = useMemo(
     () => ({
-      themeId,
-      setThemeId,
       themeMode,
       setThemeMode,
       t
     }),
-    [themeId, themeMode, t, setThemeId, setThemeMode]
+    [themeMode, t, setThemeMode]
   );
 
   return <UiContext.Provider value={value}>{children}</UiContext.Provider>;

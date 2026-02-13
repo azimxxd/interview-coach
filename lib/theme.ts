@@ -1,12 +1,5 @@
 export type ThemeMode = "light" | "dark";
-export type ThemeId =
-  | "terra"
-  | "ocean"
-  | "sunset"
-  | "forest"
-  | "slate"
-  | "midnight"
-  | "noir";
+export type ThemeId = "blue-light" | "blue-dark";
 
 export type ThemeDefinition = {
   id: ThemeId;
@@ -17,127 +10,44 @@ export type ThemeDefinition = {
 
 export const THEMES: ThemeDefinition[] = [
   {
-    id: "terra",
-    label: "Terra",
+    id: "blue-light",
+    label: "Blue Light",
     mode: "light",
     vars: {
-      "--bg-1": "#f5f1e7",
-      "--bg-2": "#e3f2f2",
-      "--ink": "#1f2a35",
-      "--muted": "#5c6b78",
-      "--card": "#ffffff",
-      "--accent": "#1f6f78",
-      "--accent-2": "#e07a5f",
-      "--accent-3": "#3d405b",
-      "--border": "rgba(31, 42, 53, 0.12)",
-      "--shadow": "0 24px 60px rgba(31, 42, 53, 0.12)"
+      "--bg-1": "#e8f0ff",
+      "--bg-2": "#d6e7ff",
+      "--ink": "#0f2440",
+      "--muted": "#4e6685",
+      "--card": "#f3f8ff",
+      "--accent": "#2563eb",
+      "--accent-2": "#1d4ed8",
+      "--accent-3": "#1e3a8a",
+      "--border": "rgba(37, 99, 235, 0.18)",
+      "--shadow": "0 24px 60px rgba(15, 36, 64, 0.14)"
     }
   },
   {
-    id: "ocean",
-    label: "Ocean",
-    mode: "light",
-    vars: {
-      "--bg-1": "#eaf4ff",
-      "--bg-2": "#d8f2f2",
-      "--ink": "#102437",
-      "--muted": "#4f6676",
-      "--card": "#fdfdff",
-      "--accent": "#1b6fb9",
-      "--accent-2": "#00a6a6",
-      "--accent-3": "#0f4c5c",
-      "--border": "rgba(16, 36, 55, 0.12)",
-      "--shadow": "0 24px 60px rgba(16, 36, 55, 0.14)"
-    }
-  },
-  {
-    id: "sunset",
-    label: "Sunset",
-    mode: "light",
-    vars: {
-      "--bg-1": "#fff0e5",
-      "--bg-2": "#ffe0cf",
-      "--ink": "#2a1f1a",
-      "--muted": "#6f5b52",
-      "--card": "#fff9f4",
-      "--accent": "#e76f51",
-      "--accent-2": "#f4a261",
-      "--accent-3": "#2a9d8f",
-      "--border": "rgba(42, 31, 26, 0.12)",
-      "--shadow": "0 24px 60px rgba(42, 31, 26, 0.16)"
-    }
-  },
-  {
-    id: "forest",
-    label: "Forest",
-    mode: "light",
-    vars: {
-      "--bg-1": "#ecf4ec",
-      "--bg-2": "#d8efe1",
-      "--ink": "#182a1f",
-      "--muted": "#4f6a5b",
-      "--card": "#f7fbf8",
-      "--accent": "#3a7d44",
-      "--accent-2": "#8f6f4d",
-      "--accent-3": "#2f4b3a",
-      "--border": "rgba(24, 42, 31, 0.12)",
-      "--shadow": "0 24px 60px rgba(24, 42, 31, 0.14)"
-    }
-  },
-  {
-    id: "slate",
-    label: "Slate",
-    mode: "light",
-    vars: {
-      "--bg-1": "#eef1f7",
-      "--bg-2": "#e2e8f0",
-      "--ink": "#1b2430",
-      "--muted": "#5b6775",
-      "--card": "#ffffff",
-      "--accent": "#5a67d8",
-      "--accent-2": "#f6ad55",
-      "--accent-3": "#2d3748",
-      "--border": "rgba(27, 36, 48, 0.12)",
-      "--shadow": "0 24px 60px rgba(27, 36, 48, 0.14)"
-    }
-  },
-  {
-    id: "midnight",
-    label: "Midnight",
+    id: "blue-dark",
+    label: "Blue Dark",
     mode: "dark",
     vars: {
-      "--bg-1": "#0c1118",
-      "--bg-2": "#111827",
-      "--ink": "#f3f4f6",
-      "--muted": "#9ca3af",
-      "--card": "#111a2b",
-      "--accent": "#38bdf8",
-      "--accent-2": "#f59e0b",
-      "--accent-3": "#a78bfa",
-      "--border": "rgba(148, 163, 184, 0.18)",
-      "--shadow": "0 30px 70px rgba(5, 8, 15, 0.6)"
-    }
-  },
-  {
-    id: "noir",
-    label: "Noir",
-    mode: "dark",
-    vars: {
-      "--bg-1": "#0b0d12",
-      "--bg-2": "#121722",
-      "--ink": "#f5f7ff",
-      "--muted": "#a1a8b3",
-      "--card": "#151c2b",
-      "--accent": "#22d3ee",
-      "--accent-2": "#f97316",
-      "--accent-3": "#34d399",
-      "--border": "rgba(148, 163, 184, 0.18)",
-      "--shadow": "0 28px 70px rgba(4, 6, 10, 0.6)"
+      "--bg-1": "#050b1a",
+      "--bg-2": "#0b1530",
+      "--ink": "#dbeafe",
+      "--muted": "#8ea7c7",
+      "--card": "#0f1d3d",
+      "--accent": "#60a5fa",
+      "--accent-2": "#3b82f6",
+      "--accent-3": "#93c5fd",
+      "--border": "rgba(96, 165, 250, 0.22)",
+      "--shadow": "0 30px 70px rgba(2, 8, 24, 0.72)"
     }
   }
 ];
 
-export const DEFAULT_THEME_ID: ThemeId = "terra";
+export const DEFAULT_THEME_ID: ThemeId = "blue-light";
+export const LIGHT_THEME_ID: ThemeId = "blue-light";
+export const DARK_THEME_ID: ThemeId = "blue-dark";
 
 export function getThemeById(themeId: ThemeId) {
   return THEMES.find((theme) => theme.id === themeId) ?? THEMES[0];
