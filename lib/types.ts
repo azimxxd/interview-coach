@@ -1,4 +1,6 @@
-export type Role = "Frontend" | "PM";
+import type { InterviewCategory, InterviewType } from "@/lib/interview/config";
+
+export type Role = InterviewCategory | "PM";
 export type Level = "Junior" | "Mid" | "Senior";
 export type Language = "EN";
 
@@ -14,6 +16,11 @@ export type DeliverySignals = {
 export type InterviewSettings = {
   role: Role;
   level: Level;
+  category: InterviewCategory;
+  difficulty: Level;
+  interviewType: InterviewType;
+  subtopics: string[];
+  jobDescription: string;
   language: Language;
   storeLocal: boolean;
   questionCount: number;

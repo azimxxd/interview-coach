@@ -2,7 +2,7 @@ import type { Language } from "@/lib/types";
 
 export const UI_COPY = {
   EN: {
-    brandBadge: "Interview Coach",
+    brandBadge: "mushivo.ai",
     heroTitle: "Train your interview voice with PersonaPlex.",
     heroBody:
       "Answer live questions, track delivery metrics, and review focused feedback.",

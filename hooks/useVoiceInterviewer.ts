@@ -1,20 +1,57 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { VoiceWsClient } from "@/lib/voice/wsClient";
+import { ConnectionManager, type ConnectionState } from "@/lib/voice/connectionManager";
+import type { InterviewConfig } from "@/lib/schema/interview";
+
+type VoiceClientMessage =
+  | {
+      type: "hello";
+      sessionId: string;
+      lang: "en";
+      mode: "interviewer";
+      role?: string;
+      level?: string;
+      topic?: string;
+    }
+  | {
+      type: "context";
+      role: string;
+      level: string;
+      topic: string;
+      previous?: Array<{ question: string; answer: string }>;
+    }
+  | {
+      type: "audio";
+      format: "pcm16";
+      sampleRate: number;
+      channels: 1;
+      data: string;
+    }
+  | { type: "end_utterance" }
+  | { type: "reset" };
+
+type VoiceServerMessage =
+  | { type: "ready" }
+  | {
+      type: "audio_out";
+      format: "pcm16";
+      sampleRate: number;
+      channels: 1;
+      data: string;
+    }
+  | { type: "text_out"; text: string }
+  | { type: "error"; message: string };
 
 type VoiceContext = {
-  role: string;
-  level: string;
   topic: string;
   previous?: Array<{ question: string; answer: string }>;
 };
 
-type VoiceStatus = "idle" | "connecting" | "ready" | "error";
-
 type VoiceInterviewerConfig = {
   enabled: boolean;
   stream: MediaStream | null;
+  interviewConfig: InterviewConfig;
   onWarning: (message: string) => void;
 };
 
@@ -77,29 +114,64 @@ function silenceChunkBase64(durationMs: number) {
 
 function buildFallbackCoachText(context: VoiceContext) {
   const topic = context.topic?.trim() || "a recent project";
-  const level = context.level?.trim() || "your";
-  const role = context.role?.trim() || "role";
-  return `Tell me about ${topic} from your ${level} ${role} experience.`;
+  return `Tell me about ${topic} and the key tradeoffs in your approach.`;
+}
+
+function createId() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random()}`;
+}
+
+async function fetchFallbackQuestion(config: InterviewConfig, topic: string) {
+  try {
+    const result = await fetch("/api/interview", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        action: "generate_primary_questions",
+        config: {
+          ...config,
+          subtopics: Array.from(new Set([topic, ...config.subtopics])).slice(0, 8)
+        },
+        count: 1
+      })
+    });
+
+    if (!result.ok) return null;
+    const payload = (await result.json()) as { questions?: string[] };
+    return payload.questions?.[0] ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export function useVoiceInterviewer({
   enabled,
   stream,
+  interviewConfig,
   onWarning
 }: VoiceInterviewerConfig) {
-  const [status, setStatus] = useState<VoiceStatus>("idle");
+  const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
+  const [serverReady, setServerReady] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [queueSize, setQueueSize] = useState(0);
 
   const onWarningRef = useRef(onWarning);
   const textQueueRef = useRef<string[]>([]);
   const audioOutCountRef = useRef(0);
-  const closedByUserRef = useRef(false);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const playbackTimeRef = useRef(0);
   const playTimeoutRef = useRef<number | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const captureCtxRef = useRef<AudioContext | null>(null);
-  const clientRef = useRef<VoiceWsClient | null>(null);
+  const managerRef = useRef<ConnectionManager<VoiceClientMessage, VoiceServerMessage> | null>(
+    null
+  );
+  const sessionIdRef = useRef(createId());
 
   useEffect(() => {
     onWarningRef.current = onWarning;
@@ -135,9 +207,9 @@ export function useVoiceInterviewer({
   }, []);
 
   const handleServerMessage = useCallback(
-    (message: any) => {
+    (message: VoiceServerMessage) => {
       if (message.type === "ready") {
-        setStatus("ready");
+        setServerReady(true);
         return;
       }
       if (message.type === "text_out") {
@@ -154,57 +226,82 @@ export function useVoiceInterviewer({
       }
       if (message.type === "error") {
         onWarningRef.current(message.message || "Voice server error.");
-        setStatus("error");
       }
     },
     [schedulePlayback]
   );
 
+  const syncQueueSize = useCallback(() => {
+    const next = managerRef.current?.getQueueSize() ?? 0;
+    setQueueSize(next);
+  }, []);
+
   const connect = useCallback(async () => {
     if (!enabled) return false;
-    if (clientRef.current?.isOpen()) return true;
-    closedByUserRef.current = false;
-    setStatus("connecting");
-    try {
-      const client = new VoiceWsClient(wsUrl, {
-        onMessage: handleServerMessage,
-        onError: (message) => {
-          onWarningRef.current(message);
-          setStatus("error");
-        },
-        onClose: () => {
-          if (!closedByUserRef.current && enabled) {
-            setStatus("error");
+
+    if (!managerRef.current) {
+      managerRef.current = new ConnectionManager<VoiceClientMessage, VoiceServerMessage>(
+        wsUrl,
+        {
+          maxAttempts: 8,
+          baseDelayMs: 600,
+          maxDelayMs: 10000,
+          jitterRatio: 0.3,
+          heartbeatIntervalMs: 12000,
+          deadConnectionMs: 28000,
+          createHeartbeatMessage: () => ({
+            type: "hello",
+            sessionId: sessionIdRef.current,
+            lang: "en",
+            mode: "interviewer",
+            role: interviewConfig.category,
+            level: interviewConfig.difficulty,
+            topic: interviewConfig.interviewType
+          }),
+          onOpen: () => {
+            setServerReady(false);
+            managerRef.current?.send({
+              type: "hello",
+              sessionId: sessionIdRef.current,
+              lang: "en",
+              mode: "interviewer",
+              role: interviewConfig.category,
+              level: interviewConfig.difficulty,
+              topic: interviewConfig.interviewType
+            });
+            syncQueueSize();
+          },
+          onStateChange: (state) => {
+            setConnectionState(state);
+            syncQueueSize();
+          },
+          onMessage: (message) => {
+            handleServerMessage(message);
+            syncQueueSize();
+          },
+          onError: (message) => {
+            onWarningRef.current(message);
+            syncQueueSize();
           }
         }
-      });
-      clientRef.current = client;
-      await client.connect();
-      client.send({
-        type: "hello",
-        sessionId: `${Date.now()}`,
-        lang: "en",
-        mode: "interviewer"
-      });
-      setStatus("ready");
-      return true;
-    } catch {
-      setStatus("error");
-      return false;
+      );
     }
-  }, [enabled, handleServerMessage, wsUrl]);
+
+    managerRef.current.start();
+    return true;
+  }, [enabled, handleServerMessage, interviewConfig, syncQueueSize, wsUrl]);
 
   const disconnect = useCallback(() => {
-    closedByUserRef.current = true;
-    clientRef.current?.disconnect();
-    clientRef.current = null;
+    managerRef.current?.stop();
     if (playTimeoutRef.current) {
       window.clearTimeout(playTimeoutRef.current);
       playTimeoutRef.current = null;
     }
     setIsPlaying(false);
-    setStatus("idle");
-  }, []);
+    setServerReady(false);
+    setConnectionState("offline");
+    syncQueueSize();
+  }, [syncQueueSize]);
 
   useEffect(() => {
     if (!enabled) {
@@ -217,18 +314,47 @@ export function useVoiceInterviewer({
     };
   }, [connect, disconnect, enabled]);
 
-  const sendContext = useCallback((context: VoiceContext) => {
-    if (!clientRef.current?.isOpen()) return;
-    clientRef.current.send({ type: "context", ...context });
+  useEffect(() => {
+    const manager = managerRef.current;
+    if (!manager) return;
+
+    const handleOnline = () => manager.setOnlineStatus(true);
+    const handleOffline = () => manager.setOnlineStatus(false);
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
   }, []);
 
+  useEffect(() => {
+    const timer = window.setInterval(syncQueueSize, 300);
+    return () => window.clearInterval(timer);
+  }, [syncQueueSize]);
+
+  const sendContext = useCallback(
+    (context: VoiceContext) => {
+      managerRef.current?.send({
+        type: "context",
+        role: interviewConfig.category,
+        level: interviewConfig.difficulty,
+        topic: `${interviewConfig.interviewType} | ${context.topic}`,
+        previous: context.previous
+      });
+      syncQueueSize();
+    },
+    [interviewConfig, syncQueueSize]
+  );
+
   const sendSilence = useCallback((totalMs: number) => {
-    if (!clientRef.current?.isOpen()) return;
     const chunkMs = 200;
     const chunks = Math.max(1, Math.ceil(totalMs / chunkMs));
     const data = silenceChunkBase64(chunkMs);
     for (let i = 0; i < chunks; i += 1) {
-      clientRef.current.send({
+      managerRef.current?.send({
         type: "audio",
         format: "pcm16",
         sampleRate: 16000,
@@ -236,66 +362,70 @@ export function useVoiceInterviewer({
         data
       });
     }
-  }, []);
+    syncQueueSize();
+  }, [syncQueueSize]);
 
   const endUtterance = useCallback(() => {
-    if (!clientRef.current?.isOpen()) return;
-    clientRef.current.send({ type: "end_utterance" });
-  }, []);
+    managerRef.current?.send({ type: "end_utterance" });
+    syncQueueSize();
+  }, [syncQueueSize]);
 
-  const waitForCoachOutput = useCallback(
-    async (timeoutMs: number, audioStartCount: number) => {
-      const startedAt = Date.now();
-      let audioDetectedAt: number | null = null;
+  const waitForCoachOutput = useCallback(async (timeoutMs: number, audioStartCount: number) => {
+    const startedAt = Date.now();
+    let audioDetectedAt: number | null = null;
 
-      while (Date.now() - startedAt < timeoutMs) {
-        const next = textQueueRef.current.shift();
-        if (next) return { text: next, audioSeen: true };
+    while (Date.now() - startedAt < timeoutMs) {
+      const next = textQueueRef.current.shift();
+      if (next) return { text: next, audioSeen: true };
 
-        if (audioOutCountRef.current > audioStartCount) {
-          if (!audioDetectedAt) {
-            audioDetectedAt = Date.now();
-          } else if (Date.now() - audioDetectedAt >= AUDIO_TEXT_GRACE_MS) {
-            return { text: null, audioSeen: true };
-          }
+      if (audioOutCountRef.current > audioStartCount) {
+        if (!audioDetectedAt) {
+          audioDetectedAt = Date.now();
+        } else if (Date.now() - audioDetectedAt >= AUDIO_TEXT_GRACE_MS) {
+          return { text: null, audioSeen: true };
         }
-
-        await new Promise((resolve) => window.setTimeout(resolve, 120));
       }
 
-      return {
-        text: null,
-        audioSeen: audioOutCountRef.current > audioStartCount
-      };
-    },
-    []
-  );
+      await new Promise((resolve) => window.setTimeout(resolve, 120));
+    }
+
+    return {
+      text: null,
+      audioSeen: audioOutCountRef.current > audioStartCount
+    };
+  }, []);
 
   const requestCoachTurn = useCallback(
     async (context: VoiceContext, options?: RequestCoachTurnOptions) => {
-      if (!enabled || !clientRef.current?.isOpen()) {
-        return { text: null, usedVoice: false };
-      }
       const timeoutMs = options?.timeoutMs ?? DEFAULT_WAIT_MS;
       const silenceMs = options?.silenceMs ?? 0;
-      const audioStartCount = audioOutCountRef.current;
-      textQueueRef.current = [];
-      sendContext(context);
-      if (silenceMs > 0) {
-        sendSilence(silenceMs);
+
+      if (connectionState === "connected" && serverReady) {
+        const audioStartCount = audioOutCountRef.current;
+        textQueueRef.current = [];
+        sendContext(context);
+        if (silenceMs > 0) {
+          sendSilence(silenceMs);
+        }
+        endUtterance();
+        const output = await waitForCoachOutput(timeoutMs, audioStartCount);
+        const text = output.text?.trim() ? output.text : null;
+        if (text) {
+          return { text, usedVoice: true };
+        }
+        if (output.audioSeen) {
+          return { text: buildFallbackCoachText(context), usedVoice: true };
+        }
       }
-      endUtterance();
-      const output = await waitForCoachOutput(timeoutMs, audioStartCount);
-      const text = output.text?.trim() ? output.text : null;
-      if (text) {
-        return { text, usedVoice: true };
+
+      const fallbackText = await fetchFallbackQuestion(interviewConfig, context.topic);
+      if (fallbackText) {
+        return { text: fallbackText, usedVoice: false };
       }
-      if (output.audioSeen) {
-        return { text: buildFallbackCoachText(context), usedVoice: true };
-      }
-      return { text: null, usedVoice: true };
+
+      return { text: buildFallbackCoachText(context), usedVoice: false };
     },
-    [enabled, endUtterance, sendContext, sendSilence, waitForCoachOutput]
+    [connectionState, endUtterance, interviewConfig, sendContext, sendSilence, serverReady, waitForCoachOutput]
   );
 
   const requestOpeningQuestion = useCallback(
@@ -309,7 +439,7 @@ export function useVoiceInterviewer({
   );
 
   const startCapture = useCallback(async () => {
-    if (!enabled || !stream || !clientRef.current?.isOpen()) return;
+    if (!enabled || !stream || connectionState !== "connected") return;
     if (processorRef.current) return;
 
     const ctx = new AudioContext();
@@ -324,7 +454,7 @@ export function useVoiceInterviewer({
       const downsampled = downsampleTo16k(input, ctx.sampleRate);
       const pcm16 = floatTo16BitPCM(downsampled);
       const data = pcm16ToBase64(pcm16);
-      clientRef.current?.send({
+      managerRef.current?.send({
         type: "audio",
         format: "pcm16",
         sampleRate: 16000,
@@ -337,7 +467,7 @@ export function useVoiceInterviewer({
     processor.connect(gain);
     gain.connect(ctx.destination);
     processorRef.current = processor;
-  }, [enabled, stream]);
+  }, [connectionState, enabled, stream]);
 
   const stopCapture = useCallback(() => {
     if (processorRef.current) {
@@ -356,22 +486,28 @@ export function useVoiceInterviewer({
 
   const reset = useCallback(() => {
     textQueueRef.current = [];
-    if (clientRef.current?.isOpen()) {
-      clientRef.current.send({ type: "reset" });
-    }
+    managerRef.current?.send({ type: "reset" });
     if (playTimeoutRef.current) {
       window.clearTimeout(playTimeoutRef.current);
       playTimeoutRef.current = null;
     }
     setIsPlaying(false);
+    syncQueueSize();
+  }, [syncQueueSize]);
+
+  const retryNow = useCallback(() => {
+    managerRef.current?.retryNow();
   }, []);
 
   return {
-    status,
+    connectionState,
+    queueSize,
+    status: connectionState,
     isPlaying,
-    isReady: status === "ready",
+    isReady: connectionState === "connected" && serverReady,
     connect,
     disconnect,
+    retryNow,
     startCapture,
     stopCapture,
     endUtterance,

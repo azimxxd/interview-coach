@@ -12,6 +12,7 @@ export function useSpeechToText(language: Language) {
   const [interimTranscript, setInterimTranscript] = useState("");
   const [isSupported, setIsSupported] = useState(false);
   const [isListening, setIsListening] = useState(false);
+  const [lastError, setLastError] = useState<string | null>(null);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const shouldRestartRef = useRef(false);
 
@@ -20,6 +21,7 @@ export function useSpeechToText(language: Language) {
       window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognitionCtor) {
       setIsSupported(false);
+      setLastError("Speech recognition is not supported in this browser.");
       recognitionRef.current = null;
       return;
     }
@@ -45,9 +47,13 @@ export function useSpeechToText(language: Language) {
         setTranscript((prev) => `${prev} ${finalChunk}`.trim());
       }
       setInterimTranscript(interimChunk.trim());
+      setLastError(null);
     };
 
-    recognition.onstart = () => setIsListening(true);
+    recognition.onstart = () => {
+      setIsListening(true);
+      setLastError(null);
+    };
     recognition.onend = () => {
       setIsListening(false);
       setInterimTranscript("");
@@ -61,9 +67,11 @@ export function useSpeechToText(language: Language) {
         }, 200);
       }
     };
-    recognition.onerror = () => {
+    recognition.onerror = (event: Event) => {
+      const details = event as Event & { error?: string };
       setIsListening(false);
       setInterimTranscript("");
+      setLastError(details.error ?? "Speech recognition error.");
       if (shouldRestartRef.current) {
         window.setTimeout(() => {
           try {
@@ -88,10 +96,11 @@ export function useSpeechToText(language: Language) {
     const recognition = recognitionRef.current;
     if (!recognition) return;
     shouldRestartRef.current = true;
+    setLastError(null);
     try {
       recognition.start();
     } catch {
-      // Ignore repeated start errors.
+      setLastError("Unable to start speech recognition.");
     }
   };
 
@@ -103,6 +112,7 @@ export function useSpeechToText(language: Language) {
   const reset = () => {
     setTranscript("");
     setInterimTranscript("");
+    setLastError(null);
   };
 
   return {
@@ -110,6 +120,7 @@ export function useSpeechToText(language: Language) {
     interimTranscript,
     isSupported,
     isListening,
+    lastError,
     start,
     stop,
     reset,

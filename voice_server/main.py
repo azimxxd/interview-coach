@@ -4,12 +4,22 @@ import json
 import os
 from typing import Any, Dict
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel, Field
 
 from moshi_proxy import MoshiProxy
 from personaplex_runner import PersonaPlexRunner
+from transcriber import LocalTranscriber
+from tts_kokoro import LocalKokoroTts
 
 app = FastAPI()
+
+
+class TtsRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
+    voice: str | None = Field(default=None, max_length=64)
+    speed: float | None = Field(default=None, ge=0.7, le=1.3)
+    lang_code: str | None = Field(default=None, max_length=8)
 
 
 def _chunk_audio(pcm_bytes: bytes, sample_rate: int, chunk_ms: int = 200):
@@ -26,9 +36,57 @@ def _startup():
     if proxy_url:
         app.state.proxy = MoshiProxy(proxy_url)
         app.state.runner = None
-        return
-    app.state.proxy = None
-    app.state.runner = PersonaPlexRunner()
+    else:
+        app.state.proxy = None
+        app.state.runner = PersonaPlexRunner()
+    app.state.transcriber = LocalTranscriber()
+    app.state.tts = LocalKokoroTts()
+
+
+@app.post("/transcribe")
+async def transcribe_audio(
+    audio: UploadFile = File(...), language: str = Form(default="en")
+):
+    transcriber: LocalTranscriber | None = getattr(app.state, "transcriber", None)
+    if transcriber is None:
+        raise HTTPException(status_code=503, detail="Local transcriber is not available.")
+
+    payload = await audio.read()
+    if not payload:
+        raise HTTPException(status_code=400, detail="Audio payload is empty.")
+
+    try:
+        transcript = transcriber.transcribe(payload, language=language)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return {"transcript": transcript}
+
+
+@app.post("/tts")
+async def synthesize_tts(payload: TtsRequest):
+    tts: LocalKokoroTts | None = getattr(app.state, "tts", None)
+    if tts is None:
+        raise HTTPException(status_code=503, detail="Local TTS is not available.")
+
+    try:
+        wav_bytes, sample_rate = tts.synthesize(
+            payload.text,
+            voice=payload.voice,
+            speed=payload.speed,
+            lang_code=payload.lang_code,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    if not wav_bytes:
+        raise HTTPException(status_code=500, detail="Kokoro returned empty audio.")
+
+    return {
+        "audio_base64": base64.b64encode(wav_bytes).decode("ascii"),
+        "format": "wav",
+        "sample_rate": sample_rate,
+    }
 
 
 @app.websocket("/ws")

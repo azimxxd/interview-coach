@@ -28,7 +28,49 @@ To enable OpenAI:
 ```bash
 OPENAI_API_KEY=your_key_here
 OPENAI_MODEL=gpt-4o-mini
+OPENAI_API_BASE=https://api.openai.com/v1
+OPENAI_TRANSCRIBE_MODEL=whisper-1
+LOCAL_TRANSCRIBE_URL=http://127.0.0.1:8008/transcribe
+LOCAL_TTS_URL=http://127.0.0.1:8008/tts
 ```
+
+## Unified interview API
+
+`POST /api/interview` supports:
+
+- `generate_preview_questions`
+- `generate_primary_questions`
+- `generate_followups`
+- `score_answer`
+
+All request/response payloads are schema-validated with Zod.
+
+`POST /api/interview/transcribe` accepts recorded answer audio (`multipart/form-data`) and returns:
+
+- `{"transcript":"..."}` (schema-validated)
+
+`POST /api/interview/repeat-tts` accepts repeat text and returns local TTS audio metadata:
+
+- `{"audio_base64":"...","format":"wav","sample_rate":24000}` (schema-validated)
+
+Transcription source priority:
+
+1. `LOCAL_TRANSCRIBE_URL` (free local STT, recommended for Firefox)
+2. OpenAI audio transcription (`OPENAI_API_KEY`)
+
+Repeat TTS source priority:
+
+1. `LOCAL_TTS_URL` (Kokoro on `voice_server`, recommended)
+2. No browser fallback. If Kokoro is unavailable, repeat TTS is disabled and shows an error.
+
+## Realtime behavior
+
+- Voice websocket endpoint: `ws://127.0.0.1:8008/ws`
+- Client uses a connection state machine (`connecting`, `connected`, `reconnecting`, `offline`, `error`)
+- Reconnect uses exponential backoff + jitter with max retry cap
+- Heartbeat keepalive is sent on the websocket and dead connections are recycled
+- Outbound websocket messages are queued while disconnected and flushed in order after reconnect
+- If realtime coach delivery is unavailable, the app falls back to HTTP question generation via `/api/interview`
 
 ## Demo flow
 
@@ -43,4 +85,6 @@ OPENAI_MODEL=gpt-4o-mini
 ## Privacy notes
 
 - Raw video/audio is never stored.
+- If browser live transcription misses speech, short answer audio is temporarily sent to `/api/interview/transcribe` and forwarded to OpenAI transcription.
+- If repeat TTS is enabled, repeat text is sent to `/api/interview/repeat-tts` to synthesize short local WAV output.
 - Only transcript + aggregated metrics are stored in memory unless you toggle "Store session locally".

@@ -84,7 +84,6 @@ export function computeConfidenceTurn(input: ConfidenceInput): ConfidenceTurnRes
   if (process.env.NODE_ENV !== "production") {
     if (!Number.isFinite(score)) {
       // Simple guard to avoid surfacing NaN in UI.
-      // eslint-disable-next-line no-console
       console.warn("Confidence score invalid", { wpm, fillerCount, pausesSec, durationSec });
     }
   }

@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "eslint .",
+    "test": "node --import tsx --test tests/*.test.ts"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^0.10.14",
@@ -21,6 +22,7 @@
     "@types/react-dom": "^18.2.20",
     "eslint": "^9.39.2",
     "eslint-config-next": "^16.1.6",
+    "tsx": "^4.20.3",
     "typescript": "^5.4.5"
   }
 }

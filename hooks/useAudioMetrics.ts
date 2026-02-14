@@ -9,19 +9,25 @@ const PAUSE_MIN_MS = 600;
 export function useAudioMetrics(stream: MediaStream | null, isActive: boolean) {
   const [rms, setRms] = useState(0);
   const [pauseSeconds, setPauseSeconds] = useState(0);
+  const [pauseCount, setPauseCount] = useState(0);
+  const [longestPauseMs, setLongestPauseMs] = useState(0);
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const intervalRef = useRef<number | null>(null);
   const silentMsRef = useRef(0);
   const totalPauseMsRef = useRef(0);
   const inPauseRef = useRef(false);
+  const currentPauseMsRef = useRef(0);
 
   const reset = () => {
     setRms(0);
     setPauseSeconds(0);
+    setPauseCount(0);
+    setLongestPauseMs(0);
     silentMsRef.current = 0;
     totalPauseMsRef.current = 0;
     inPauseRef.current = false;
+    currentPauseMsRef.current = 0;
   };
 
   useEffect(() => {
@@ -67,14 +73,19 @@ export function useAudioMetrics(stream: MediaStream | null, isActive: boolean) {
         silentMsRef.current += SAMPLE_INTERVAL;
         if (!inPauseRef.current && silentMsRef.current >= PAUSE_MIN_MS) {
           inPauseRef.current = true;
+          currentPauseMsRef.current = PAUSE_MIN_MS;
+          setPauseCount((prev) => prev + 1);
         }
         if (inPauseRef.current) {
           totalPauseMsRef.current += SAMPLE_INTERVAL;
+          currentPauseMsRef.current += SAMPLE_INTERVAL;
           setPauseSeconds(totalPauseMsRef.current / 1000);
+          setLongestPauseMs((prev) => Math.max(prev, currentPauseMsRef.current));
         }
       } else {
         silentMsRef.current = 0;
         inPauseRef.current = false;
+        currentPauseMsRef.current = 0;
       }
     }, SAMPLE_INTERVAL);
 
@@ -89,5 +100,5 @@ export function useAudioMetrics(stream: MediaStream | null, isActive: boolean) {
     };
   }, [stream, isActive]);
 
-  return { rms, pauseSeconds, reset };
+  return { rms, pauseSeconds, pauseCount, longestPauseMs, reset };
 }

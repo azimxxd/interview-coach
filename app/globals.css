@@ -140,6 +140,13 @@ a {
   box-shadow: 0 0 0 3px rgba(31, 111, 120, 0.12);
 }
 
+.brand-logo {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  object-fit: cover;
+}
+
 .top-actions {
   display: flex;
   align-items: center;
@@ -911,6 +918,13 @@ li {
   place-items: center;
   font-weight: 700;
   letter-spacing: 0.04em;
+  overflow: hidden;
+}
+
+.coach-logo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .call-user video {
@@ -1087,4 +1101,211 @@ li {
   .call-chat-card .chat-bubble {
     max-width: 92%;
   }
+}
+
+.subtopics-fieldset {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin: 0;
+}
+
+.subtopics-fieldset legend {
+  padding: 0 6px;
+  font-weight: 700;
+}
+
+.subtopics-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.subtopic-pill {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.preview-card {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 12px;
+  background: rgba(148, 163, 184, 0.06);
+}
+
+.preview-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.preview-header h3 {
+  margin: 0;
+}
+
+.preview-list {
+  margin: 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 6px;
+}
+
+.connection-banner {
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.connection-banner small {
+  font-size: 0.75rem;
+  opacity: 0.8;
+}
+
+.connection-banner.state-connected {
+  border-color: rgba(22, 163, 74, 0.45);
+}
+
+.connection-banner.state-reconnecting {
+  border-color: rgba(234, 179, 8, 0.45);
+}
+
+.connection-banner.state-offline,
+.connection-banner.state-error {
+  border-color: rgba(239, 68, 68, 0.45);
+}
+
+.metric-pill small {
+  font-size: 0.72rem;
+  opacity: 0.8;
+}
+
+.question-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.question-header h3 {
+  margin: 0;
+}
+
+.question-tabs {
+  display: flex;
+  gap: 8px;
+}
+
+.question-tabs .btn {
+  padding: 8px 14px;
+}
+
+.question-tabs .btn.is-active {
+  background: rgba(37, 99, 235, 0.14);
+}
+
+.current-question-text,
+.transcript-block {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  min-height: 90px;
+  white-space: pre-wrap;
+  line-height: 1.4;
+  background: rgba(148, 163, 184, 0.06);
+}
+
+.hint-text {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.rubric-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+  background: rgba(148, 163, 184, 0.06);
+}
+
+.rubric-card h4 {
+  margin: 0;
+}
+
+.rubric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 8px;
+}
+
+.rubric-score-pill {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px;
+  display: grid;
+  gap: 2px;
+}
+
+.rubric-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.followup-list {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+}
+
+.followup-item {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.summary-recommendation {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+}
+
+.btn.is-active {
+  border-color: var(--accent);
+  background: rgba(37, 99, 235, 0.12);
+}
+
+.prompt-box {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 8px 10px;
+  background: rgba(148, 163, 184, 0.06);
+}
+
+.prompt-box summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.prompt-box pre {
+  margin: 10px 0 0;
+  white-space: pre-wrap;
+  font-family: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  font-size: 0.85rem;
+  line-height: 1.4;
 }

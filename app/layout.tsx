@@ -4,7 +4,7 @@ import UiControls from "@/components/UiControls";
 import { UiProvider } from "@/components/UiProvider";
 
 export const metadata: Metadata = {
-  title: "Interview Coach",
+  title: "mushivo.ai",
   description:
     "Practice interviews with live delivery signals and structured feedback."
 };

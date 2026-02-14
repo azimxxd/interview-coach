@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useUi } from "@/components/UiProvider";
 
@@ -9,11 +10,22 @@ export default function UiControls() {
   return (
     <div className="top-bar">
       <Link className="brand-link" href="/">
-        <span className="brand-dot" />
-        Interview Coach
+        <Image
+          src="/mushivo-logo.png"
+          alt="mushivo.ai"
+          width={22}
+          height={22}
+          className="brand-logo"
+        />
+        mushivo.ai
       </Link>
 
       <div className="top-actions">
+        <div className="controls">
+          <Link className="btn btn-ghost" href="/history">
+            History
+          </Link>
+        </div>
         <div className="theme-mode-toggle">
           <span className="tiny">{t("themeModeLabel")}</span>
           <div className="segmented">
