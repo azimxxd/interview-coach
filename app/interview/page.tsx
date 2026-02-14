@@ -35,6 +35,7 @@ type LastMetrics = {
 
 const FILLERS = ["um", "uh", "like", "you know", "sort of", "actually", "basically"];
 const KOKORO_REPEAT_REQUEST_TIMEOUT_MS = 12000;
+const MIC_ACTIVE_THRESHOLD = 0.01;
 
 function createId() {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -82,7 +83,7 @@ function countFillersDetailed(text: string) {
 }
 
 function buildMicStatus(rms: number) {
-  if (rms < 0.01) return { label: "Muted", icon: "◼" };
+  if (rms < MIC_ACTIVE_THRESHOLD) return { label: "Muted", icon: "◼" };
   if (rms < 0.03) return { label: "Low", icon: "◑" };
   return { label: "OK", icon: "◉" };
 }
@@ -404,6 +405,7 @@ export default function InterviewPage() {
   const displayLongestPauseMs = isRecording ? audio.longestPauseMs : lastMetrics.longestPauseMs;
   const micValue = isRecording ? audio.rms : lastMetrics.micLevel;
   const micStatus = buildMicStatus(micValue);
+  const isMicActive = (isRecording || phase === "soundcheck") && audio.rms >= MIC_ACTIVE_THRESHOLD;
 
   const coachStatus = isCoachThinking
     ? "Coach is thinking..."
@@ -1028,7 +1030,7 @@ export default function InterviewPage() {
         </header>
 
         <div className="call-video-row">
-          <article className="call-tile call-user">
+          <article className={`call-tile call-user ${isMicActive ? "is-speaking" : ""}`}>
             <video ref={videoRef} autoPlay playsInline muted />
             <div className="tile-meta">
               <strong>You</strong>

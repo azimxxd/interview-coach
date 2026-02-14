@@ -3,6 +3,28 @@
 This app is expected to run in **proxy mode** against NVIDIA `moshi.server`.
 For full voice mode, `PERSONAPLEX_MOCK=0` alone is not enough.
 
+## Quick start (hosted Runpod Moshi URL)
+
+If your Runpod already exposes Moshi on `8998`, run local proxy with one command:
+
+```bash
+cd /home/azimxd/projects/interview-coach/voice_server
+RUNPOD_MOSHI_URL="https://YOUR-POD-8998.proxy.runpod.net" ./run_with_runpod.sh
+```
+
+If you run this script inside a Runpod pod, it auto-uses:
+
+- `RUNPOD_MOSHI_URL=http://127.0.0.1:8998`
+- `VOICE_SERVER_HOST=0.0.0.0`
+
+Optional overrides:
+
+```bash
+RUNPOD_MOSHI_URL="https://YOUR-POD-8998.proxy.runpod.net" ./run_with_runpod.sh
+VOICE_PROMPT="NATF2.pt" ./run_with_runpod.sh
+TEXT_PROMPT="You are a strict interviewer. Ask one short question." ./run_with_runpod.sh
+```
+
 ## 1) Install proxy dependencies (once)
 
 ```bash
@@ -32,15 +54,16 @@ Use your existing PersonaPlex checkout:
 ```bash
 cd ~/personaplex
 source .venv/bin/activate
-hf auth login
-SSL_DIR=$(mktemp -d)
-python -m moshi.server --ssl "$SSL_DIR" --device cpu
+pip install -U "huggingface_hub[cli]"
+export HF_HUB_ENABLE_HF_TRANSFER=0
+python -m huggingface_hub.commands.huggingface_cli login
+python -m moshi.server --host 127.0.0.1 --port 8998 --device cpu
 ```
 
 If you have a small GPU and CPU offload support installed, try this first:
 
 ```bash
-python -m moshi.server --ssl "$SSL_DIR" --device cuda --cpu-offload
+python -m moshi.server --host 127.0.0.1 --port 8998 --device cuda --cpu-offload
 ```
 
 ## 3) Start this proxy server (terminal B)
@@ -48,12 +71,17 @@ python -m moshi.server --ssl "$SSL_DIR" --device cuda --cpu-offload
 ```bash
 cd /home/azimxd/projects/interview-coach/voice_server
 source venv/bin/activate
-export PERSONAPLEX_PROXY_URL="https://127.0.0.1:8998/api/chat?voice_prompt=NATF2.pt&text_prompt=You%20are%20a%20wise%20and%20friendly%20teacher.%20Ask%20one%20short%20interview%20question."
-export MOSHI_INSECURE=1
+export PERSONAPLEX_PROXY_URL="http://127.0.0.1:8998/api/chat?voice_prompt=NATF2.pt&text_prompt=You%20are%20a%20wise%20and%20friendly%20teacher.%20Ask%20one%20short%20interview%20question."
 export LOCAL_TTS_PROVIDER=kokoro
 export KOKORO_VOICE=af_heart
 export KOKORO_SPEED=0.95
-uvicorn main:app --host 127.0.0.1 --port 8008
+uvicorn main:app --host 0.0.0.0 --port 8008
+```
+
+Equivalent (more PATH-safe):
+
+```bash
+python -m uvicorn main:app --host 0.0.0.0 --port 8008
 ```
 
 ## 4) Start web app (terminal C)
@@ -68,7 +96,7 @@ Open `http://127.0.0.1:3000`.
 ## 5) Verify ports
 
 ```bash
-ss -ltnp | rg ':8998|:8008|:3000'
+ss -ltnp | grep -E ':8998|:8008|:3000'
 ```
 
 You should see all three ports listening.

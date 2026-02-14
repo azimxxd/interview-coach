@@ -60,9 +60,51 @@ type RequestCoachTurnOptions = {
   silenceMs?: number;
 };
 
-const DEFAULT_WAIT_MS = 180000;
-const DEFAULT_SILENCE_MS = 1200;
-const AUDIO_TEXT_GRACE_MS = 6000;
+const DEFAULT_WAIT_MS = 5 * 60 * 1000;
+const DEFAULT_SILENCE_MS = 2500;
+const STREAM_SETTLE_MS = 1500;
+const DEFAULT_DEAD_CONNECTION_MS = 6 * 60 * 1000;
+const DEFAULT_VOICE_WS_URL = "ws://127.0.0.1:8008/ws";
+const VOICE_WS_OVERRIDE_KEY = "VOICE_WS_URL";
+
+function normalizeWsUrl(raw: string) {
+  const configured = raw.trim();
+  if (!configured) return "";
+  if (configured.startsWith("ws://") || configured.startsWith("wss://")) {
+    return configured;
+  }
+  if (configured.startsWith("http://")) {
+    return "ws://" + configured.slice("http://".length);
+  }
+  if (configured.startsWith("https://")) {
+    return "wss://" + configured.slice("https://".length);
+  }
+  return `ws://${configured}`;
+}
+
+function resolveVoiceWsUrl() {
+  if (typeof window !== "undefined") {
+    const params = new URLSearchParams(window.location.search);
+    const urlParam = params.get("voice_ws");
+    if (urlParam?.trim()) {
+      const normalized = normalizeWsUrl(urlParam);
+      if (normalized) {
+        window.localStorage.setItem(VOICE_WS_OVERRIDE_KEY, normalized);
+        return normalized;
+      }
+    }
+
+    const stored = window.localStorage.getItem(VOICE_WS_OVERRIDE_KEY);
+    if (stored?.trim()) {
+      const normalized = normalizeWsUrl(stored);
+      if (normalized) return normalized;
+    }
+  }
+
+  const configured = process.env.NEXT_PUBLIC_VOICE_WS_URL?.trim();
+  if (!configured) return DEFAULT_VOICE_WS_URL;
+  return normalizeWsUrl(configured);
+}
 
 function base64ToInt16(base64: string) {
   const binary = atob(base64);
@@ -117,6 +159,18 @@ function buildFallbackCoachText(context: VoiceContext) {
   return `Tell me about ${topic} and the key tradeoffs in your approach.`;
 }
 
+function normalizeGeneratedText(parts: string[]) {
+  return parts
+    .join("")
+    .replace(/\s+/g, " ")
+    .replace(/\s+([.,!?;:])/g, "$1")
+    .trim();
+}
+
+function normalizeSubtopic(value: string) {
+  return value.trim().replace(/\s+/g, " ").slice(0, 48);
+}
+
 function createId() {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return crypto.randomUUID();
@@ -125,6 +179,11 @@ function createId() {
 }
 
 async function fetchFallbackQuestion(config: InterviewConfig, topic: string) {
+  const normalizedTopic = normalizeSubtopic(topic);
+  const subtopics = normalizedTopic
+    ? Array.from(new Set([normalizedTopic, ...config.subtopics])).slice(0, 8)
+    : config.subtopics.slice(0, 8);
+
   try {
     const result = await fetch("/api/interview", {
       method: "POST",
@@ -135,7 +194,7 @@ async function fetchFallbackQuestion(config: InterviewConfig, topic: string) {
         action: "generate_primary_questions",
         config: {
           ...config,
-          subtopics: Array.from(new Set([topic, ...config.subtopics])).slice(0, 8)
+          subtopics
         },
         count: 1
       })
@@ -161,6 +220,7 @@ export function useVoiceInterviewer({
   const [queueSize, setQueueSize] = useState(0);
 
   const onWarningRef = useRef(onWarning);
+  const connectionStateRef = useRef<ConnectionState>("connecting");
   const textQueueRef = useRef<string[]>([]);
   const audioOutCountRef = useRef(0);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -177,7 +237,11 @@ export function useVoiceInterviewer({
     onWarningRef.current = onWarning;
   }, [onWarning]);
 
-  const wsUrl = useMemo(() => "ws://127.0.0.1:8008/ws", []);
+  useEffect(() => {
+    connectionStateRef.current = connectionState;
+  }, [connectionState]);
+
+  const wsUrl = useMemo(() => resolveVoiceWsUrl(), []);
 
   const schedulePlayback = useCallback((pcm: Int16Array, sampleRate: number) => {
     if (!audioCtxRef.current) {
@@ -248,7 +312,7 @@ export function useVoiceInterviewer({
           maxDelayMs: 10000,
           jitterRatio: 0.3,
           heartbeatIntervalMs: 12000,
-          deadConnectionMs: 28000,
+          deadConnectionMs: DEFAULT_DEAD_CONNECTION_MS,
           createHeartbeatMessage: () => ({
             type: "hello",
             sessionId: sessionIdRef.current,
@@ -280,7 +344,7 @@ export function useVoiceInterviewer({
             syncQueueSize();
           },
           onError: (message) => {
-            onWarningRef.current(message);
+            onWarningRef.current(`${message} [${wsUrl}]`);
             syncQueueSize();
           }
         }
@@ -372,26 +436,46 @@ export function useVoiceInterviewer({
 
   const waitForCoachOutput = useCallback(async (timeoutMs: number, audioStartCount: number) => {
     const startedAt = Date.now();
-    let audioDetectedAt: number | null = null;
+    let lastSignalAt: number | null = null;
+    let lastAudioCount = audioStartCount;
+    const textParts: string[] = [];
 
     while (Date.now() - startedAt < timeoutMs) {
-      const next = textQueueRef.current.shift();
-      if (next) return { text: next, audioSeen: true };
+      if (connectionStateRef.current !== "connected") {
+        const disconnectedText = normalizeGeneratedText(textParts);
+        return {
+          text: disconnectedText || null,
+          audioSeen: audioOutCountRef.current > audioStartCount || Boolean(disconnectedText)
+        };
+      }
 
-      if (audioOutCountRef.current > audioStartCount) {
-        if (!audioDetectedAt) {
-          audioDetectedAt = Date.now();
-        } else if (Date.now() - audioDetectedAt >= AUDIO_TEXT_GRACE_MS) {
-          return { text: null, audioSeen: true };
+      while (textQueueRef.current.length > 0) {
+        const next = textQueueRef.current.shift();
+        if (!next) continue;
+        textParts.push(next);
+        lastSignalAt = Date.now();
+      }
+
+      if (audioOutCountRef.current > lastAudioCount) {
+        lastAudioCount = audioOutCountRef.current;
+        lastSignalAt = Date.now();
+      }
+
+      if (lastSignalAt !== null) {
+        const quietMs = Date.now() - lastSignalAt;
+        if (quietMs >= STREAM_SETTLE_MS) {
+          const text = normalizeGeneratedText(textParts) || null;
+          return { text, audioSeen: lastAudioCount > audioStartCount || Boolean(text) };
         }
       }
 
       await new Promise((resolve) => window.setTimeout(resolve, 120));
     }
 
+    const text = normalizeGeneratedText(textParts) || null;
     return {
-      text: null,
-      audioSeen: audioOutCountRef.current > audioStartCount
+      text,
+      audioSeen: audioOutCountRef.current > audioStartCount || Boolean(text)
     };
   }, []);
 
@@ -500,6 +584,7 @@ export function useVoiceInterviewer({
   }, []);
 
   return {
+    wsUrl,
     connectionState,
     queueSize,
     status: connectionState,

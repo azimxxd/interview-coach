@@ -2,6 +2,7 @@ import asyncio
 import base64
 import json
 import os
+import logging
 from typing import Any, Dict
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
@@ -13,6 +14,7 @@ from transcriber import LocalTranscriber
 from tts_kokoro import LocalKokoroTts
 
 app = FastAPI()
+logger = logging.getLogger(__name__)
 
 
 class TtsRequest(BaseModel):
@@ -28,6 +30,17 @@ def _chunk_audio(pcm_bytes: bytes, sample_rate: int, chunk_ms: int = 200):
     bytes_per_chunk = samples_per_chunk * bytes_per_sample
     for idx in range(0, len(pcm_bytes), bytes_per_chunk):
         yield pcm_bytes[idx : idx + bytes_per_chunk]
+
+
+async def _safe_send_json(ws: WebSocket, payload: Dict[str, Any]) -> bool:
+    try:
+        await ws.send_json(payload)
+        return True
+    except WebSocketDisconnect:
+        return False
+    except Exception:
+        # Includes transport-level disconnects surfaced by Uvicorn/Starlette.
+        return False
 
 
 @app.on_event("startup")
@@ -92,7 +105,6 @@ async def synthesize_tts(payload: TtsRequest):
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
-    await ws.send_json({"type": "ready"})
 
     proxy: MoshiProxy | None = app.state.proxy
     if proxy is not None:
@@ -101,11 +113,14 @@ async def websocket_endpoint(ws: WebSocket):
         except WebSocketDisconnect:
             return
         except Exception as exc:
-            await ws.send_json({"type": "error", "message": str(exc)})
+            logger.exception("Proxy session failed: %s", exc)
+            await _safe_send_json(ws, {"type": "error", "message": str(exc)})
         return
 
     session_audio = bytearray()
     context: Dict[str, Any] = {}
+    if not await _safe_send_json(ws, {"type": "ready"}):
+        return
 
     try:
         while True:
@@ -113,7 +128,8 @@ async def websocket_endpoint(ws: WebSocket):
             try:
                 message = json.loads(raw)
             except json.JSONDecodeError:
-                await ws.send_json({"type": "error", "message": "Invalid JSON."})
+                if not await _safe_send_json(ws, {"type": "error", "message": "Invalid JSON."}):
+                    return
                 continue
 
             msg_type = message.get("type")
@@ -126,7 +142,8 @@ async def websocket_endpoint(ws: WebSocket):
                         "lang": message.get("lang") or context.get("lang", "en"),
                     }
                 )
-                await ws.send_json({"type": "ready"})
+                if not await _safe_send_json(ws, {"type": "ready"}):
+                    return
             elif msg_type == "context":
                 context.update(
                     {
@@ -140,29 +157,39 @@ async def websocket_endpoint(ws: WebSocket):
                 try:
                     session_audio.extend(base64.b64decode(data))
                 except Exception:
-                    await ws.send_json({"type": "error", "message": "Invalid audio payload."})
+                    if not await _safe_send_json(
+                        ws, {"type": "error", "message": "Invalid audio payload."}
+                    ):
+                        return
             elif msg_type == "end_utterance":
                 runner: PersonaPlexRunner = app.state.runner
                 text, pcm_bytes, sample_rate = runner.generate(context, bytes(session_audio))
                 session_audio = bytearray()
                 if text:
-                    await ws.send_json({"type": "text_out", "text": text})
+                    if not await _safe_send_json(ws, {"type": "text_out", "text": text}):
+                        return
                 for chunk in _chunk_audio(pcm_bytes, sample_rate):
-                    await ws.send_json(
+                    if not await _safe_send_json(
+                        ws,
                         {
                             "type": "audio_out",
                             "format": "pcm16",
                             "sampleRate": sample_rate,
                             "channels": 1,
                             "data": base64.b64encode(chunk).decode("ascii"),
-                        }
-                    )
+                        },
+                    ):
+                        return
                     await asyncio.sleep(0.03)
             elif msg_type == "reset":
                 session_audio = bytearray()
             else:
-                await ws.send_json({"type": "error", "message": "Unknown message type."})
+                if not await _safe_send_json(
+                    ws, {"type": "error", "message": "Unknown message type."}
+                ):
+                    return
     except WebSocketDisconnect:
         return
     except Exception as exc:
-        await ws.send_json({"type": "error", "message": str(exc)})
+        logger.exception("WebSocket session failed: %s", exc)
+        await _safe_send_json(ws, {"type": "error", "message": str(exc)})

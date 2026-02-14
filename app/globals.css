@@ -909,6 +909,10 @@ li {
   box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.6), 0 0 32px rgba(56, 189, 248, 0.2);
 }
 
+.call-user.is-speaking {
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.6), 0 0 32px rgba(56, 189, 248, 0.2);
+}
+
 .coach-avatar {
   width: 110px;
   height: 110px;
@@ -1042,6 +1046,10 @@ li {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+}
+
+.call-main-action {
+  min-width: 220px;
 }
 
 .call-warning {

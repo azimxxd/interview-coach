@@ -30,6 +30,7 @@ OPENAI_API_KEY=your_key_here
 OPENAI_MODEL=gpt-4o-mini
 OPENAI_API_BASE=https://api.openai.com/v1
 OPENAI_TRANSCRIBE_MODEL=whisper-1
+NEXT_PUBLIC_VOICE_WS_URL=ws://127.0.0.1:8008/ws
 LOCAL_TRANSCRIBE_URL=http://127.0.0.1:8008/transcribe
 LOCAL_TTS_URL=http://127.0.0.1:8008/tts
 ```
@@ -65,12 +66,36 @@ Repeat TTS source priority:
 
 ## Realtime behavior
 
-- Voice websocket endpoint: `ws://127.0.0.1:8008/ws`
+- Voice websocket endpoint: `NEXT_PUBLIC_VOICE_WS_URL` (default `ws://127.0.0.1:8008/ws`)
 - Client uses a connection state machine (`connecting`, `connected`, `reconnecting`, `offline`, `error`)
 - Reconnect uses exponential backoff + jitter with max retry cap
 - Heartbeat keepalive is sent on the websocket and dead connections are recycled
 - Outbound websocket messages are queued while disconnected and flushed in order after reconnect
 - If realtime coach delivery is unavailable, the app falls back to HTTP question generation via `/api/interview`
+
+## Runpod remote backend
+
+If `voice_server` runs on Runpod, set:
+
+```bash
+NEXT_PUBLIC_VOICE_WS_URL=wss://<YOUR-POD>-8008.proxy.runpod.net/ws
+LOCAL_TRANSCRIBE_URL=https://<YOUR-POD>-8008.proxy.runpod.net/transcribe
+LOCAL_TTS_URL=https://<YOUR-POD>-8008.proxy.runpod.net/tts
+```
+
+And keep an SSH tunnel from your laptop:
+
+```bash
+ssh -N -L 8008:127.0.0.1:8008 -p <RUNPOD_TCP_PORT> root@<RUNPOD_TCP_IP>
+```
+
+If you expose port `8008` publicly from Runpod, you can set
+`NEXT_PUBLIC_VOICE_WS_URL` directly to that public `wss://.../ws` endpoint
+instead of using a tunnel.
+
+For quick runtime override without editing env files, open:
+
+`/personaplex?voice_ws=wss://<YOUR-POD>-8008.proxy.runpod.net/ws`
 
 ## Demo flow
 
