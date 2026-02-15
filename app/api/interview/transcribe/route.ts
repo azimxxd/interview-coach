@@ -7,11 +7,38 @@ const LOCAL_TRANSCRIBE_URL =
   process.env.LOCAL_TRANSCRIBE_URL ?? process.env.VOICE_SERVER_TRANSCRIBE_URL ?? "";
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
 
+function deriveTranscribeUrlFromVoiceWs(raw: string) {
+  try {
+    const url = new URL(raw.trim());
+    if (url.protocol !== "ws:" && url.protocol !== "wss:") {
+      return "";
+    }
+
+    const hostname = url.hostname.toLowerCase();
+    const allowedHost =
+      hostname === "127.0.0.1" ||
+      hostname === "localhost" ||
+      hostname.endsWith(".proxy.runpod.net");
+    if (!allowedHost) {
+      return "";
+    }
+
+    const protocol = url.protocol === "wss:" ? "https:" : "http:";
+    const path = url.pathname.endsWith("/ws")
+      ? `${url.pathname.slice(0, -3)}/transcribe`
+      : "/transcribe";
+    return `${protocol}//${url.host}${path}`;
+  } catch {
+    return "";
+  }
+}
+
 export async function POST(req: Request) {
   try {
     const formData = await req.formData();
     const audio = formData.get("audio");
     const language = formData.get("language");
+    const voiceWsUrl = formData.get("voice_ws_url");
 
     if (!(audio instanceof File)) {
       return NextResponse.json({ error: "Missing audio file." }, { status: 400 });
@@ -26,15 +53,18 @@ export async function POST(req: Request) {
     }
 
     let localError: string | null = null;
+    const hintedTranscribeUrl =
+      typeof voiceWsUrl === "string" ? deriveTranscribeUrlFromVoiceWs(voiceWsUrl) : "";
+    const localTranscribeUrl = LOCAL_TRANSCRIBE_URL || hintedTranscribeUrl;
 
-    if (LOCAL_TRANSCRIBE_URL) {
+    if (localTranscribeUrl) {
       const localForm = new FormData();
       localForm.append("audio", audio, audio.name || "answer.webm");
       if (typeof language === "string" && language.trim()) {
         localForm.append("language", language.trim().slice(0, 8));
       }
 
-      const local = await fetch(LOCAL_TRANSCRIBE_URL, {
+      const local = await fetch(localTranscribeUrl, {
         method: "POST",
         body: localForm
       });

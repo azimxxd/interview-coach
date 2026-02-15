@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ConnectionManager, type ConnectionState } from "@/lib/voice/connectionManager";
+import { transcribeAudioBlob } from "@/lib/voice/transcribeClient";
 import type { InterviewConfig } from "@/lib/schema/interview";
 
 type VoiceClientMessage =
@@ -62,22 +63,46 @@ type RequestCoachTurnOptions = {
 
 const DEFAULT_WAIT_MS = 5 * 60 * 1000;
 const DEFAULT_SILENCE_MS = 2500;
-const STREAM_SETTLE_MS = 1500;
+const STREAM_SETTLE_MS = 900;
+const STREAM_HARD_SETTLE_MS = 2200;
 const DEFAULT_DEAD_CONNECTION_MS = 6 * 60 * 1000;
 const DEFAULT_VOICE_WS_URL = "ws://127.0.0.1:8008/ws";
 const VOICE_WS_OVERRIDE_KEY = "VOICE_WS_URL";
+const COACH_CAPTURE_GUARD_MS = 1400;
+const PLAYBACK_IDLE_GAP_MS = 500;
+const ENABLE_COACH_STT_FALLBACK = process.env.NEXT_PUBLIC_COACH_STT_FALLBACK !== "0";
+const COACH_STT_TIMEOUT_MS = 3500;
 
 function normalizeWsUrl(raw: string) {
   const configured = raw.trim();
   if (!configured) return "";
   if (configured.startsWith("ws://") || configured.startsWith("wss://")) {
+    try {
+      const parsed = new URL(configured);
+      if (
+        parsed.protocol === "ws:" &&
+        parsed.hostname.toLowerCase().endsWith(".proxy.runpod.net")
+      ) {
+        parsed.protocol = "wss:";
+        return parsed.toString();
+      }
+    } catch {
+      // fall through and return raw value
+    }
     return configured;
   }
   if (configured.startsWith("http://")) {
-    return "ws://" + configured.slice("http://".length);
+    const value = configured.slice("http://".length);
+    if (value.toLowerCase().includes(".proxy.runpod.net")) {
+      return "wss://" + value;
+    }
+    return "ws://" + value;
   }
   if (configured.startsWith("https://")) {
     return "wss://" + configured.slice("https://".length);
+  }
+  if (configured.toLowerCase().includes(".proxy.runpod.net")) {
+    return `wss://${configured}`;
   }
   return `ws://${configured}`;
 }
@@ -171,6 +196,62 @@ function normalizeSubtopic(value: string) {
   return value.trim().replace(/\s+/g, " ").slice(0, 48);
 }
 
+function hasSentenceEnding(text: string) {
+  return /[.!?]["')\]]?\s*$/.test(text);
+}
+
+function writeAscii(view: DataView, offset: number, text: string) {
+  for (let i = 0; i < text.length; i += 1) {
+    view.setUint8(offset + i, text.charCodeAt(i));
+  }
+}
+
+function pcm16ChunksToWavBlob(chunks: Int16Array[], sampleRate: number): Blob | null {
+  if (!chunks.length) return null;
+  const totalSamples = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  if (totalSamples <= 0) return null;
+
+  const dataBytes = totalSamples * 2;
+  const buffer = new ArrayBuffer(44 + dataBytes);
+  const view = new DataView(buffer);
+
+  writeAscii(view, 0, "RIFF");
+  view.setUint32(4, 36 + dataBytes, true);
+  writeAscii(view, 8, "WAVE");
+  writeAscii(view, 12, "fmt ");
+  view.setUint32(16, 16, true); // PCM fmt chunk size
+  view.setUint16(20, 1, true); // audio format = PCM
+  view.setUint16(22, 1, true); // channels = mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true); // byte rate
+  view.setUint16(32, 2, true); // block align
+  view.setUint16(34, 16, true); // bits per sample
+  writeAscii(view, 36, "data");
+  view.setUint32(40, dataBytes, true);
+
+  const pcm = new Int16Array(buffer, 44, totalSamples);
+  let offset = 0;
+  for (const chunk of chunks) {
+    pcm.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
+function meanAbsPcm16(chunks: Int16Array[]) {
+  let total = 0;
+  let count = 0;
+  for (const chunk of chunks) {
+    for (let i = 0; i < chunk.length; i += 1) {
+      total += Math.abs(chunk[i]);
+    }
+    count += chunk.length;
+  }
+  if (count === 0) return 0;
+  return total / count;
+}
+
 function createId() {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return crypto.randomUUID();
@@ -218,6 +299,7 @@ export function useVoiceInterviewer({
   const [serverReady, setServerReady] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [queueSize, setQueueSize] = useState(0);
+  const [lastCoachAudioAt, setLastCoachAudioAt] = useState(0);
 
   const onWarningRef = useRef(onWarning);
   const connectionStateRef = useRef<ConnectionState>("connecting");
@@ -225,9 +307,13 @@ export function useVoiceInterviewer({
   const audioOutCountRef = useRef(0);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const playbackTimeRef = useRef(0);
+  const playbackQueueRef = useRef(Promise.resolve());
   const playTimeoutRef = useRef<number | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const captureCtxRef = useRef<AudioContext | null>(null);
+  const lastAudioOutAtRef = useRef(0);
+  const coachPcmChunksRef = useRef<Int16Array[]>([]);
+  const coachSampleRateRef = useRef(24000);
   const managerRef = useRef<ConnectionManager<VoiceClientMessage, VoiceServerMessage> | null>(
     null
   );
@@ -243,11 +329,31 @@ export function useVoiceInterviewer({
 
   const wsUrl = useMemo(() => resolveVoiceWsUrl(), []);
 
-  const schedulePlayback = useCallback((pcm: Int16Array, sampleRate: number) => {
+  const primeAudio = useCallback(async () => {
+    if (!audioCtxRef.current) {
+      audioCtxRef.current = new AudioContext();
+    }
+    if (audioCtxRef.current.state !== "running") {
+      try {
+        await audioCtxRef.current.resume();
+      } catch {
+        // Ignore browser policy failures; playback path will retry.
+      }
+    }
+  }, []);
+
+  const schedulePlayback = useCallback(async (pcm: Int16Array, sampleRate: number) => {
     if (!audioCtxRef.current) {
       audioCtxRef.current = new AudioContext();
     }
     const ctx = audioCtxRef.current;
+    if (ctx.state !== "running") {
+      try {
+        await ctx.resume();
+      } catch {
+        // continue; some browsers can still start once user interacts again
+      }
+    }
     const float32 = new Float32Array(pcm.length);
     for (let i = 0; i < pcm.length; i += 1) {
       float32[i] = pcm[i] / 0x8000;
@@ -267,7 +373,7 @@ export function useVoiceInterviewer({
     const remainingMs = Math.max(0, (playbackTimeRef.current - ctx.currentTime) * 1000);
     playTimeoutRef.current = window.setTimeout(() => {
       setIsPlaying(false);
-    }, remainingMs + 80);
+    }, remainingMs + PLAYBACK_IDLE_GAP_MS);
   }, []);
 
   const handleServerMessage = useCallback(
@@ -284,8 +390,18 @@ export function useVoiceInterviewer({
       }
       if (message.type === "audio_out") {
         audioOutCountRef.current += 1;
+        const now = Date.now();
+        lastAudioOutAtRef.current = now;
+        setLastCoachAudioAt(now);
         const sampleRate = Number(message.sampleRate || 16000);
-        schedulePlayback(base64ToInt16(message.data), sampleRate);
+        const pcm = base64ToInt16(message.data);
+        if (pcm.length > 0) {
+          coachPcmChunksRef.current.push(pcm);
+          coachSampleRateRef.current = sampleRate;
+          playbackQueueRef.current = playbackQueueRef.current
+            .then(() => schedulePlayback(pcm, sampleRate))
+            .catch(() => undefined);
+        }
         return;
       }
       if (message.type === "error") {
@@ -357,6 +473,9 @@ export function useVoiceInterviewer({
 
   const disconnect = useCallback(() => {
     managerRef.current?.stop();
+    textQueueRef.current = [];
+    coachPcmChunksRef.current = [];
+    playbackQueueRef.current = Promise.resolve();
     if (playTimeoutRef.current) {
       window.clearTimeout(playTimeoutRef.current);
       playTimeoutRef.current = null;
@@ -463,13 +582,16 @@ export function useVoiceInterviewer({
 
       if (lastSignalAt !== null) {
         const quietMs = Date.now() - lastSignalAt;
-        if (quietMs >= STREAM_SETTLE_MS) {
-          const text = normalizeGeneratedText(textParts) || null;
-          return { text, audioSeen: lastAudioCount > audioStartCount || Boolean(text) };
+        const text = normalizeGeneratedText(textParts);
+        if (
+          quietMs >= STREAM_HARD_SETTLE_MS ||
+          (quietMs >= STREAM_SETTLE_MS && text.length > 0 && hasSentenceEnding(text))
+        ) {
+          return { text: text || null, audioSeen: lastAudioCount > audioStartCount || Boolean(text) };
         }
       }
 
-      await new Promise((resolve) => window.setTimeout(resolve, 120));
+      await new Promise((resolve) => window.setTimeout(resolve, 80));
     }
 
     const text = normalizeGeneratedText(textParts) || null;
@@ -485,8 +607,10 @@ export function useVoiceInterviewer({
       const silenceMs = options?.silenceMs ?? 0;
 
       if (connectionState === "connected" && serverReady) {
+        await primeAudio();
         const audioStartCount = audioOutCountRef.current;
         textQueueRef.current = [];
+        coachPcmChunksRef.current = [];
         sendContext(context);
         if (silenceMs > 0) {
           sendSilence(silenceMs);
@@ -498,7 +622,37 @@ export function useVoiceInterviewer({
           return { text, usedVoice: true };
         }
         if (output.audioSeen) {
-          return { text: buildFallbackCoachText(context), usedVoice: true };
+          if (ENABLE_COACH_STT_FALLBACK) {
+            const totalSamples = coachPcmChunksRef.current.reduce(
+              (sum, chunk) => sum + chunk.length,
+              0
+            );
+            if (totalSamples >= 4000) {
+              const wavBlob = pcm16ChunksToWavBlob(
+                coachPcmChunksRef.current,
+                coachSampleRateRef.current
+              );
+              if (wavBlob) {
+                const recovered = await Promise.race([
+                  transcribeAudioBlob(wavBlob, "en", { voiceWsUrl: wsUrl }),
+                  new Promise<{ transcript: string; error: string | null }>((resolve) =>
+                    window.setTimeout(
+                      () => resolve({ transcript: "", error: "timeout" }),
+                      COACH_STT_TIMEOUT_MS
+                    )
+                  )
+                ]);
+                if (recovered.transcript) {
+                  return { text: recovered.transcript, usedVoice: true };
+                }
+              }
+            }
+          }
+          const meanAbs = meanAbsPcm16(coachPcmChunksRef.current);
+          if (meanAbs < 80) {
+            return { text: null, usedVoice: false };
+          }
+          return { text: null, usedVoice: true };
         }
       }
 
@@ -509,7 +663,17 @@ export function useVoiceInterviewer({
 
       return { text: buildFallbackCoachText(context), usedVoice: false };
     },
-    [connectionState, endUtterance, interviewConfig, sendContext, sendSilence, serverReady, waitForCoachOutput]
+    [
+      connectionState,
+      endUtterance,
+      interviewConfig,
+      primeAudio,
+      sendContext,
+      sendSilence,
+      serverReady,
+      waitForCoachOutput,
+      wsUrl
+    ]
   );
 
   const requestOpeningQuestion = useCallback(
@@ -534,6 +698,9 @@ export function useVoiceInterviewer({
     gain.gain.value = 0;
 
     processor.onaudioprocess = (event) => {
+      if (Date.now() - lastAudioOutAtRef.current < COACH_CAPTURE_GUARD_MS) {
+        return;
+      }
       const input = event.inputBuffer.getChannelData(0);
       const downsampled = downsampleTo16k(input, ctx.sampleRate);
       const pcm16 = floatTo16BitPCM(downsampled);
@@ -570,6 +737,8 @@ export function useVoiceInterviewer({
 
   const reset = useCallback(() => {
     textQueueRef.current = [];
+    coachPcmChunksRef.current = [];
+    playbackQueueRef.current = Promise.resolve();
     managerRef.current?.send({ type: "reset" });
     if (playTimeoutRef.current) {
       window.clearTimeout(playTimeoutRef.current);
@@ -585,6 +754,7 @@ export function useVoiceInterviewer({
 
   return {
     wsUrl,
+    lastCoachAudioAt,
     connectionState,
     queueSize,
     status: connectionState,
@@ -592,6 +762,7 @@ export function useVoiceInterviewer({
     isReady: connectionState === "connected" && serverReady,
     connect,
     disconnect,
+    primeAudio,
     retryNow,
     startCapture,
     stopCapture,

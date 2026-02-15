@@ -29,7 +29,8 @@ const AUTO_LISTEN_ARM_DELAY_MS = 450;
 const OPENING_TURN_TIMEOUT_MS = 120000;
 const MODEL_TURN_TIMEOUT_MS = 70000;
 const OPENING_SILENCE_MS = 2400;
-const TURN_TAIL_SILENCE_MS = 1200;
+const TURN_TAIL_SILENCE_MS = 0;
+const COACH_FINISH_GUARD_MS = 1600;
 
 function createId() {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -144,6 +145,7 @@ export default function PersonaPlexPage() {
       setWarning("PersonaPlex backend is not ready yet. Wait for Live status, then retry.");
       return;
     }
+    await voice.primeAudio();
     setWarning(null);
     setIsCoachThinking(true);
 
@@ -168,7 +170,10 @@ export default function PersonaPlexPage() {
       setSessionElapsed(0);
       autoListenArmedRef.current = true;
     } else {
-      pushMessage("system", "PersonaPlex did not return text. Please retry.");
+      pushMessage("coach", "(Coach spoke. Transcript unavailable.)");
+      setIsStarted(true);
+      setSessionElapsed(0);
+      autoListenArmedRef.current = true;
     }
 
     setIsCoachThinking(false);
@@ -176,6 +181,7 @@ export default function PersonaPlexPage() {
 
   const startAnswer = useCallback(async () => {
     if (!isStarted || isRecording) return;
+    if (voice.isPlaying || Date.now() - voice.lastCoachAudioAt < COACH_FINISH_GUARD_MS) return;
     if (!voice.isReady) {
       setWarning("PersonaPlex backend is disconnected. Wait for Live status.");
       return;
@@ -185,7 +191,6 @@ export default function PersonaPlexPage() {
 
     setWarning(null);
     speech.reset();
-    voice.reset();
     const recorderStarted = recorder.start(granted);
     if (!speech.isSupported && !recorderStarted) {
       setWarning(
@@ -232,8 +237,8 @@ export default function PersonaPlexPage() {
         pushMessage("coach", result.text);
         return true;
       } else {
-        pushMessage("system", "No coach response received yet. Try nudge or retry connection.");
-        return false;
+        pushMessage("coach", "(Coach spoke. Transcript unavailable.)");
+        return true;
       }
     },
     [lastQuestion, personaPlexPrompt, pushMessage, voice]
@@ -253,37 +258,23 @@ export default function PersonaPlexPage() {
 
     let transcript = liveTranscript.trim();
     if (!transcript) {
-      transcript = "(spoken answer)";
-    }
-    const userMessageId = createId();
-    setMessages((prev) => [...prev, { id: userMessageId, role: "user", text: transcript }]);
-
-    setIsCoachThinking(true);
-    const continued = await requestNextCoachTurn(transcript);
-    setIsCoachThinking(false);
-    autoListenArmedRef.current = continued;
-
-    if (transcript === "(spoken answer)") {
       const recordedAudio = await recordedAudioPromise;
       if (recordedAudio) {
         const recovered = await transcribeAudioBlob(recordedAudio, "en");
         if (recovered.transcript) {
-          const recoveredText = recovered.transcript;
-          setMessages((prev) =>
-            prev.map((message) =>
-              message.id === userMessageId ? { ...message, text: recoveredText } : message
-            )
-          );
-          if (previousTurnsRef.current.length) {
-            const idx = previousTurnsRef.current.length - 1;
-            const turn = previousTurnsRef.current[idx];
-            previousTurnsRef.current[idx] = { ...turn, answer: recoveredText };
-          }
+          transcript = recovered.transcript;
         } else if (recovered.error) {
           setWarning(`Transcription fallback failed: ${recovered.error}`);
         }
       }
     }
+    transcript = transcript || "(spoken answer)";
+    setMessages((prev) => [...prev, { id: createId(), role: "user", text: transcript }]);
+
+    setIsCoachThinking(true);
+    const continued = await requestNextCoachTurn(transcript);
+    setIsCoachThinking(false);
+    autoListenArmedRef.current = continued;
   }, [isRecording, liveTranscript, recorder, requestNextCoachTurn, speech, voice]);
 
   const nudgeCoach = useCallback(async () => {
@@ -301,6 +292,7 @@ export default function PersonaPlexPage() {
   useEffect(() => {
     if (!isStarted || isRecording || isCoachThinking || voice.isPlaying || !voice.isReady) return;
     if (!autoListenArmedRef.current) return;
+    if (Date.now() - voice.lastCoachAudioAt < COACH_FINISH_GUARD_MS) return;
 
     if (autoListenTimerRef.current) {
       window.clearTimeout(autoListenTimerRef.current);
@@ -320,7 +312,7 @@ export default function PersonaPlexPage() {
         autoListenTimerRef.current = null;
       }
     };
-  }, [isCoachThinking, isRecording, isStarted, startAnswer, voice.isPlaying, voice.isReady]);
+  }, [isCoachThinking, isRecording, isStarted, startAnswer, voice.isPlaying, voice.isReady, voice.lastCoachAudioAt]);
 
   useEffect(() => {
     if (!isRecording) return;
@@ -378,7 +370,7 @@ export default function PersonaPlexPage() {
 
         <div className={`connection-banner state-${voice.connectionState}`}>
           <span>{connectionLabel}</span>
-          <small>endpoint: {voice.wsUrl}</small>
+          <small suppressHydrationWarning>endpoint: {voice.wsUrl}</small>
           {voice.queueSize > 0 && <small>sending... ({voice.queueSize})</small>}
           {(voice.connectionState === "reconnecting" ||
             voice.connectionState === "offline" ||
@@ -416,7 +408,7 @@ export default function PersonaPlexPage() {
             <div className="tile-meta">
               <strong>mushivo.ai</strong>
               <span className="tiny">
-                {isCoachThinking ? "Thinking..." : voice.isPlaying ? "Speaking..." : "Ready"}
+                {voice.isPlaying ? "Speaking..." : isCoachThinking ? "Thinking..." : "Ready"}
               </span>
             </div>
           </article>

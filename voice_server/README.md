@@ -3,28 +3,6 @@
 This app is expected to run in **proxy mode** against NVIDIA `moshi.server`.
 For full voice mode, `PERSONAPLEX_MOCK=0` alone is not enough.
 
-## Quick start (hosted Runpod Moshi URL)
-
-If your Runpod already exposes Moshi on `8998`, run local proxy with one command:
-
-```bash
-cd /home/azimxd/projects/interview-coach/voice_server
-RUNPOD_MOSHI_URL="https://YOUR-POD-8998.proxy.runpod.net" ./run_with_runpod.sh
-```
-
-If you run this script inside a Runpod pod, it auto-uses:
-
-- `RUNPOD_MOSHI_URL=http://127.0.0.1:8998`
-- `VOICE_SERVER_HOST=0.0.0.0`
-
-Optional overrides:
-
-```bash
-RUNPOD_MOSHI_URL="https://YOUR-POD-8998.proxy.runpod.net" ./run_with_runpod.sh
-VOICE_PROMPT="NATF2.pt" ./run_with_runpod.sh
-TEXT_PROMPT="You are a strict interviewer. Ask one short question." ./run_with_runpod.sh
-```
-
 ## 1) Install proxy dependencies (once)
 
 ```bash
@@ -76,12 +54,6 @@ export LOCAL_TTS_PROVIDER=kokoro
 export KOKORO_VOICE=af_heart
 export KOKORO_SPEED=0.95
 uvicorn main:app --host 0.0.0.0 --port 8008
-```
-
-Equivalent (more PATH-safe):
-
-```bash
-python -m uvicorn main:app --host 0.0.0.0 --port 8008
 ```
 
 ## 4) Start web app (terminal C)

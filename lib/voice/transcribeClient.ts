@@ -3,7 +3,14 @@ type TranscribeResponse = {
   transcript?: unknown;
 };
 
+type TranscribeOptions = {
+  voiceWsUrl?: string;
+};
+
 function extensionFromMimeType(mimeType: string) {
+  if (mimeType.includes("wav") || mimeType.includes("wave")) {
+    return "wav";
+  }
   if (mimeType.includes("mp4") || mimeType.includes("mpeg")) {
     return "m4a";
   }
@@ -20,7 +27,8 @@ export type TranscriptionResult = {
 
 export async function transcribeAudioBlob(
   blob: Blob,
-  language = "en"
+  language = "en",
+  options: TranscribeOptions = {}
 ): Promise<TranscriptionResult> {
   if (!blob || blob.size <= 0) {
     return {
@@ -36,6 +44,9 @@ export async function transcribeAudioBlob(
     const form = new FormData();
     form.append("audio", file);
     form.append("language", language);
+    if (options.voiceWsUrl?.trim()) {
+      form.append("voice_ws_url", options.voiceWsUrl.trim());
+    }
 
     const response = await fetch("/api/interview/transcribe", {
       method: "POST",

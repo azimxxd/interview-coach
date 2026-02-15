@@ -83,10 +83,13 @@ class MoshiProxy:
         self.sample_rate = int(os.getenv("MOSHI_SAMPLE_RATE", "24000"))
         self.input_rate = int(os.getenv("MOSHI_INPUT_RATE", "16000"))
         self.output_chunk = int(os.getenv("MOSHI_OUTPUT_CHUNK", "1920"))
+        self.min_output_flush = int(os.getenv("MOSHI_MIN_OUTPUT_FLUSH", "480"))
         self.input_chunk = int(os.getenv("MOSHI_INPUT_CHUNK", "1920"))
         self.insecure = os.getenv("MOSHI_INSECURE", "0") == "1"
         if self.input_chunk not in _ALLOWED_FRAME_SIZES:
             self.input_chunk = 1920
+        if self.min_output_flush <= 0:
+            self.min_output_flush = 480
 
     def _ssl_context(self) -> Optional[ssl.SSLContext]:
         if self.server_url.startswith("wss://"):
@@ -112,6 +115,25 @@ class MoshiProxy:
     async def _forward_from_moshi(self, ws_moshi, ws_client, ready_event: asyncio.Event) -> None:
         reader = sphn.OpusStreamReader(self.sample_rate)
         buffered_audio = np.zeros(0, dtype=np.float32)
+
+        async def flush_audio(force: bool = False) -> bool:
+            nonlocal buffered_audio
+            if buffered_audio.size == 0:
+                return True
+            if not force and buffered_audio.size < self.min_output_flush:
+                return True
+            b64 = base64.b64encode(_float32_to_pcm16(buffered_audio)).decode("ascii")
+            buffered_audio = np.zeros(0, dtype=np.float32)
+            return await self._safe_send_json(
+                ws_client,
+                {
+                    "type": "audio_out",
+                    "format": "pcm16",
+                    "sampleRate": self.sample_rate,
+                    "channels": 1,
+                    "data": b64,
+                },
+            )
 
         async for message in ws_moshi:
             if not isinstance(message, (bytes, bytearray)):
@@ -147,131 +169,196 @@ class MoshiProxy:
                         },
                     ):
                         return
+                # Flush only when we have a meaningful tail size to avoid
+                # flooding the client with tiny packets.
+                if not await flush_audio(force=False):
+                    return
             elif kind == 2:
+                # Keep audio/text aligned around token boundaries.
+                if not await flush_audio(force=True):
+                    return
                 text = payload.decode("utf-8", errors="ignore")
                 if text:
                     if not await self._safe_send_json(
                         ws_client, {"type": "text_out", "text": text}
                     ):
                         return
+        await flush_audio(force=True)
 
     async def handle_session(self, ws_client) -> None:
         ssl_context = self._ssl_context()
-        async with websockets.connect(
-            self.server_url,
-            ssl=ssl_context,
-            ping_interval=None,
-            ping_timeout=None,
-            max_size=None,
-        ) as ws_moshi:
-            writer = sphn.OpusStreamWriter(self.sample_rate)
-            buffered_input = np.zeros(0, dtype=np.float32)
-            ready_event = asyncio.Event()
-            handshake_timeout = float(os.getenv("MOSHI_HANDSHAKE_TIMEOUT", "120"))
-            forward_task = asyncio.create_task(
-                self._forward_from_moshi(ws_moshi, ws_client, ready_event)
-            )
+        handshake_timeout = float(os.getenv("MOSHI_HANDSHAKE_TIMEOUT", "120"))
+        reconnect_delay = float(os.getenv("MOSHI_RECONNECT_DELAY", "0.5"))
+        buffered_input = np.zeros(0, dtype=np.float32)
+        writer = sphn.OpusStreamWriter(self.sample_rate)
+        ws_moshi = None
+        forward_task: asyncio.Task | None = None
+        ready_event: asyncio.Event | None = None
 
-            try:
-                try:
-                    await asyncio.wait_for(ready_event.wait(), timeout=handshake_timeout)
-                except asyncio.TimeoutError:
-                    await self._safe_send_json(
-                        ws_client,
-                        {
-                            "type": "error",
-                            "message": "PersonaPlex handshake timed out. Check Moshi server logs.",
-                        },
-                    )
-                    return
-                if not await self._safe_send_json(ws_client, {"type": "ready"}):
-                    return
-
-                while True:
-                    if forward_task.done():
-                        exc = forward_task.exception()
-                        if exc is not None:
-                            raise exc
-                        return
-                    try:
-                        raw = await asyncio.wait_for(ws_client.receive_text(), timeout=1.0)
-                    except asyncio.TimeoutError:
-                        continue
-                    try:
-                        message = json.loads(raw)
-                    except Exception:
-                        if not await self._safe_send_json(
-                            ws_client, {"type": "error", "message": "Invalid JSON."}
-                        ):
-                            return
-                        continue
-
-                    msg_type = message.get("type")
-                    if msg_type == "audio":
-                        payload = message.get("data", "")
-                        input_rate = int(message.get("sampleRate") or self.input_rate)
-                        try:
-                            pcm_bytes = base64.b64decode(payload)
-                        except Exception:
-                            if not await self._safe_send_json(
-                                ws_client,
-                                {"type": "error", "message": "Invalid audio payload."},
-                            ):
-                                return
-                            continue
-                        pcm = _bytes_to_float32(pcm_bytes)
-                        pcm = _resample_linear(pcm, input_rate, self.sample_rate)
-                        if pcm.size == 0:
-                            continue
-                        buffered_input = (
-                            np.concatenate([buffered_input, pcm])
-                            if buffered_input.size
-                            else pcm
-                        )
-                        while buffered_input.size >= self.input_chunk:
-                            chunk = buffered_input[: self.input_chunk]
-                            buffered_input = buffered_input[self.input_chunk :]
-                            encoded = self._writer_append(writer, chunk)
-                            if encoded:
-                                try:
-                                    await ws_moshi.send(b"\x01" + encoded)
-                                except websockets.ConnectionClosed:
-                                    return
-                    elif msg_type == "reset":
-                        writer = sphn.OpusStreamWriter(self.sample_rate)
-                        buffered_input = np.zeros(0, dtype=np.float32)
-                    elif msg_type == "end_utterance":
-                        # Flush remaining buffered PCM in a valid frame size.
-                        if buffered_input.size:
-                            frame_size = _next_allowed_frame_size(int(buffered_input.size))
-                            if buffered_input.size < frame_size:
-                                pad = np.zeros(
-                                    frame_size - buffered_input.size, dtype=np.float32
-                                )
-                                chunk = np.concatenate([buffered_input, pad])
-                            else:
-                                chunk = buffered_input[:frame_size]
-                            buffered_input = np.zeros(0, dtype=np.float32)
-                            encoded = self._writer_append(writer, chunk)
-                            if encoded:
-                                try:
-                                    await ws_moshi.send(b"\x01" + encoded)
-                                except websockets.ConnectionClosed:
-                                    return
-                    elif msg_type in ("hello", "context"):
-                        # Optional: ignore prompts (audio-only protocol).
-                        continue
-                    else:
-                        if not await self._safe_send_json(
-                            ws_client, {"type": "error", "message": "Unknown message type."}
-                        ):
-                            return
-            finally:
+        async def close_upstream() -> None:
+            nonlocal ws_moshi, forward_task, ready_event
+            if forward_task is not None:
                 forward_task.cancel()
                 with contextlib.suppress(
                     asyncio.CancelledError, WebSocketDisconnect, websockets.ConnectionClosed
                 ):
                     await forward_task
+                forward_task = None
+            if ws_moshi is not None:
+                with contextlib.suppress(Exception):
+                    await ws_moshi.close()
+                ws_moshi = None
+            ready_event = None
+
+        async def ensure_upstream() -> bool:
+            nonlocal ws_moshi, forward_task, ready_event, writer
+            if ws_moshi is not None and forward_task is not None:
+                return True
+            try:
+                ws_moshi = await websockets.connect(
+                    self.server_url,
+                    ssl=ssl_context,
+                    ping_interval=None,
+                    ping_timeout=None,
+                    max_size=None,
+                )
+            except Exception:
+                await self._safe_send_json(
+                    ws_client,
+                    {
+                        "type": "error",
+                        "message": "Unable to connect to PersonaPlex upstream.",
+                    },
+                )
+                await asyncio.sleep(reconnect_delay)
+                return False
+
+            writer = sphn.OpusStreamWriter(self.sample_rate)
+            ready_event = asyncio.Event()
+            forward_task = asyncio.create_task(
+                self._forward_from_moshi(ws_moshi, ws_client, ready_event)
+            )
+
+            try:
+                await asyncio.wait_for(ready_event.wait(), timeout=handshake_timeout)
+            except asyncio.TimeoutError:
+                await self._safe_send_json(
+                    ws_client,
+                    {
+                        "type": "error",
+                        "message": "PersonaPlex handshake timed out. Check Moshi server logs.",
+                    },
+                )
+                await close_upstream()
+                return False
+
+            if not await self._safe_send_json(ws_client, {"type": "ready"}):
+                return False
+            return True
+
+        try:
+            while True:
+                if forward_task is not None and forward_task.done():
+                    exc = forward_task.exception()
+                    await close_upstream()
+                    if exc is not None:
+                        await self._safe_send_json(
+                            ws_client,
+                            {
+                                "type": "error",
+                                "message": f"PersonaPlex upstream closed: {exc}",
+                            },
+                        )
+                    continue
+
+                try:
+                    raw = await asyncio.wait_for(ws_client.receive_text(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    continue
+                except WebSocketDisconnect:
+                    return
+
+                try:
+                    message = json.loads(raw)
+                except Exception:
+                    if not await self._safe_send_json(
+                        ws_client, {"type": "error", "message": "Invalid JSON."}
+                    ):
+                        return
+                    continue
+
+                msg_type = message.get("type")
+                if msg_type in ("hello", "context"):
+                    # Optional: ignore prompts (audio-only protocol).
+                    continue
+
+                if msg_type == "reset":
+                    # Keep a continuous Opus stream across turns; only clear buffered PCM.
+                    buffered_input = np.zeros(0, dtype=np.float32)
+                    continue
+
+                if not await ensure_upstream():
+                    continue
+
+                if msg_type == "audio":
+                    payload = message.get("data", "")
+                    input_rate = int(message.get("sampleRate") or self.input_rate)
+                    try:
+                        pcm_bytes = base64.b64decode(payload)
+                    except Exception:
+                        if not await self._safe_send_json(
+                            ws_client,
+                            {"type": "error", "message": "Invalid audio payload."},
+                        ):
+                            return
+                        continue
+                    pcm = _bytes_to_float32(pcm_bytes)
+                    pcm = _resample_linear(pcm, input_rate, self.sample_rate)
+                    if pcm.size == 0:
+                        continue
+                    buffered_input = (
+                        np.concatenate([buffered_input, pcm])
+                        if buffered_input.size
+                        else pcm
+                    )
+                    stream_failed = False
+                    while buffered_input.size >= self.input_chunk:
+                        chunk = buffered_input[: self.input_chunk]
+                        encoded = self._writer_append(writer, chunk)
+                        if encoded:
+                            try:
+                                await ws_moshi.send(b"\x01" + encoded)
+                            except websockets.ConnectionClosed:
+                                stream_failed = True
+                                break
+                        buffered_input = buffered_input[self.input_chunk :]
+                    if stream_failed:
+                        await close_upstream()
+                        continue
+                elif msg_type == "end_utterance":
+                    # Flush remaining buffered PCM in a valid frame size.
+                    if buffered_input.size:
+                        frame_size = _next_allowed_frame_size(int(buffered_input.size))
+                        if buffered_input.size < frame_size:
+                            pad = np.zeros(frame_size - buffered_input.size, dtype=np.float32)
+                            chunk = np.concatenate([buffered_input, pad])
+                        else:
+                            chunk = buffered_input[:frame_size]
+                        buffered_input = np.zeros(0, dtype=np.float32)
+                        encoded = self._writer_append(writer, chunk)
+                        if encoded:
+                            try:
+                                await ws_moshi.send(b"\x01" + encoded)
+                            except websockets.ConnectionClosed:
+                                await close_upstream()
+                                continue
+                else:
+                    if not await self._safe_send_json(
+                        ws_client, {"type": "error", "message": "Unknown message type."}
+                    ):
+                        return
+        finally:
+            await close_upstream()
 
     @staticmethod
     def _reader_append(reader, payload: bytes):
